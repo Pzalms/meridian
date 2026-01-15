@@ -1,0 +1,6 @@
+*.o
+mdntool
+tests/test_main
+fuzz/standalone_asan
+fuzz/standalone_main.c
+fuzz/standalone_main.c.bak
