@@ -1,6 +1,8 @@
 *.o
 mdntool
 tests/test_main
+meridian_fuzz_local
 fuzz/standalone_asan
 fuzz/standalone_main.c
 fuzz/standalone_main.c.bak
+.DS_Store
