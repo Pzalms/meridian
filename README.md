@@ -75,12 +75,20 @@ Requirements: a C11-capable compiler (GCC ≥ 7 or Clang ≥ 5) and GNU Make.
 make            # builds mdntool and tests/test_main
 make test       # runs the unit test suite
 make clean      # removes build artefacts
+make install    # installs mdntool to /usr/local/bin
 ```
 
 Set `CC` and `CFLAGS` to override the compiler and flags:
 
 ```sh
 CC=clang CFLAGS="-O0 -g3" make
+```
+
+For a debug build with address sanitisation:
+
+```sh
+CC=clang CFLAGS="-O1 -g -fsanitize=address,undefined" make
+./tests/test_main
 ```
 
 ## Testing
