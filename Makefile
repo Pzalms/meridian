@@ -26,7 +26,11 @@ fuzz-local: $(OBJS)
 test: tests/test_main
 	./tests/test_main
 
+install: mdntool
+	install -m 755 mdntool /usr/local/bin/mdntool
+
 clean:
 	rm -f src/*.o cli/*.o mdntool tests/test_main fuzz/standalone_asan
+	rm -f *.o
 
-.PHONY: all test fuzz-local clean
+.PHONY: all test fuzz-local clean install
