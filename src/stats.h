@@ -9,6 +9,7 @@ typedef struct {
     uint32_t queries_run;
     uint32_t nat_lookups;
     uint32_t export_frames;
+    uint32_t crc_mismatches;
 } mdn_stats_t;
 
 void stats_init(mdn_stats_t *s);
