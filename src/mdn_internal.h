@@ -232,6 +232,9 @@ struct mdn_ctx {
 
     /* capability */
     mdn_cap_token_t      cap;
+    uint8_t              cap_token[MDN_CAP_TOKEN_LEN];
+    uint64_t             cap_nonce;
+    int                  cap_ok;
     uint16_t             flags;        /* MDN_FLAG_* */
     uint16_t             _pad0;
 
