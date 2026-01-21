@@ -94,6 +94,8 @@ int mdn_parse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
         if (computed != e->crc32) {
             if (ctx->flags & MDN_FLAG_STRICT)
                 return -1;
+            /* non-strict: count the mismatch and skip the section */
+            ctx->stats_crc_miss++;
             continue; /* skip CRC-mismatch section in non-strict mode */
         }
 
@@ -136,6 +138,7 @@ int mdn_parse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
         }
         if (rc != 0)
             return rc;
+        ctx->stats_sections_loaded++;
     }
 
     /* 6. Process SECT_POLICY_PATCH sections last, in order */

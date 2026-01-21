@@ -202,6 +202,10 @@ struct mdn_ctx {
     uint32_t              export_count;
 
     mdn_query_t queries[MDN_MAX_QUERIES];
+
+    /* parse-time counters */
+    uint32_t stats_crc_miss;
+    uint32_t stats_sections_loaded;
 };
 
 #endif /* MDN_INTERNAL_H */
