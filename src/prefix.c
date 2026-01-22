@@ -15,6 +15,8 @@ int prefix_page_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint16_t
     if (len < 12) return -1;
     item_count = (uint32_t)(data[8] | (uint32_t)data[9]<<8 | (uint32_t)data[10]<<16 | (uint32_t)data[11]<<24);
 
+    /* Validate page_id fits within the allocated page table */
+    if (page_id >= MDN_MAX_PREFIX_PAGES) return -1;
     if (item_count > 65535) return -1;
     if (stride == 0) return -1;
 
@@ -40,7 +42,7 @@ int prefix_page_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint16_t
     }
     pg->dir_count = item_count;
 
-    ctx->prefix_pages[page_id % MDN_MAX_PREFIX_PAGES] = pg;
+    ctx->prefix_pages[page_id] = pg;
     (void)id;
     return 0;
 }
