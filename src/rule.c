@@ -33,8 +33,9 @@ int rule_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len)
 
     uint32_t count = read_u32(data);
 
-    /* Validate count bounds. */
+    /* Validate count bounds — cap at compile-time limit. */
     if (count > MDN_MAX_RULES) {
+        /* rule table exceeds capacity; reject the section */
         return -1;
     }
 
