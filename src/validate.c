@@ -11,10 +11,10 @@ int mdn_validate(mdn_ctx_t *ctx)
     if (ctx->rule_count > MDN_MAX_RULES)
         return -1;
 
-    /* 2. Every query's result rule index must be within the loaded rule set */
+    /* 2. Every query's start rule index must be within the loaded rule set */
     if (ctx->rule_count > 0) {
         for (uint32_t i = 0; i < ctx->query_count; i++) {
-            if (ctx->queries[i].result_rule_id >= ctx->rule_count)
+            if (ctx->queries[i].start_rule >= ctx->rule_count)
                 return -1;
         }
     }

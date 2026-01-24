@@ -46,7 +46,7 @@ int mdn_parse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
     uint16_t query_count   = mdn_u16le(buf + 8);
 
     ctx->flags       = flags;
-    ctx->query_count = (uint32_t)query_count;
+    ctx->query_count = query_count;
 
     /* 3. Bounds-check the section table */
     size_t table_size = (size_t)section_count * SECT_ENTRY_LEN;

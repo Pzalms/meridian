@@ -44,236 +44,163 @@
 #define PREFIX_KIND_V4      1
 #define PREFIX_KIND_V6      2
 
-/* ------------------------------------------------------------------ */
-/* Zone: named policy domain                                            */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_zone {
-    uint32_t  id;
-    uint32_t  flags;
-    char      name[64];
+/* Zone */
+typedef struct {
+    uint16_t zone_id;
+    uint16_t parent_id;
+    uint16_t if_count;
+    uint16_t flags;
+    uint32_t epoch;
 } mdn_zone_t;
 
-/* ------------------------------------------------------------------ */
-/* Rule node: linked policy decision element                            */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_rule_node {
-    uint32_t  rule_id;
-    uint32_t  zone_id;
-    uint16_t  proto;
-    uint16_t  port_lo;
-    uint16_t  port_hi;
-    uint8_t   action;        /* 0=deny 1=permit 2=redirect */
-    uint8_t   _pad;
-    struct mdn_rule_node *next;
+/* Rule node */
+typedef struct {
+    uint32_t key;
+    uint32_t mask;
+    uint16_t action;
+    uint16_t next;
 } mdn_rule_node_t;
 
-/* ------------------------------------------------------------------ */
-/* Prefix page: block of address prefixes (extended)                   */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_dir_entry {
-    uint8_t   addr[16];     /* IPv4 mapped into v6 or native v6 */
-    uint8_t   prefix_len;
-    uint8_t   kind;         /* PREFIX_KIND_* */
-    uint16_t  _pad;
-} mdn_dir_entry_t;
+/* Rule actions */
+#define ACTION_ALLOW        0
+#define ACTION_DROP         1
+#define ACTION_MARK         2
+#define ACTION_REDIRECT     3
+#define ACTION_NAT_LOOKUP   4
+#define ACTION_TRIE_LOOKUP  5
+#define ACTION_AUDIT_EXPORT 6
 
-typedef struct mdn_prefix_page {
-    uint32_t        page_id;
-    uint32_t        zone_id;
-    uint8_t         kind;           /* PREFIX_KIND_* */
-    uint8_t         _pad[3];
-    uint32_t        entry_count;
-    uint8_t         entries[32][17]; /* raw packed prefix entries */
-    /* extended fields */
-    mdn_dir_entry_t *dir;
-    uint32_t         dir_count;
+/* Prefix page (with directory extension) */
+typedef struct {
+    uint32_t page_id;
+    uint16_t kind;
+    uint16_t stride;
+    uint32_t item_count;
+    uint8_t *items;
+    uint32_t *dir;       /* per-item byte offsets into items[]; length = dir_count */
+    uint32_t dir_count;
 } mdn_prefix_page_t;
 
-/* ------------------------------------------------------------------ */
-/* Session: active tracked flow                                         */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_session {
-    uint64_t  session_id;
-    uint32_t  zone_id;
-    uint32_t  rule_id;
-    uint8_t   src_addr[16];
-    uint8_t   dst_addr[16];
-    uint16_t  src_port;
-    uint16_t  dst_port;
-    uint8_t   proto;
-    uint8_t   state;         /* 0=init 1=established 2=closing */
-    uint16_t  flags;
+/* Session */
+typedef struct {
+    uint32_t sess_id;
+    uint16_t zone_id;
+    uint16_t flags;
+    uint32_t last_seen;
+    uint8_t  tuple[40];
 } mdn_session_t;
 
-/* ------------------------------------------------------------------ */
-/* NAT bucket: source-address translation pool entry                   */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_nat_bucket {
-    uint32_t  bucket_id;
-    uint32_t  zone_id;
-    uint8_t   pool_addr[16];
-    uint16_t  port_base;
-    uint16_t  port_range;
-    uint32_t  session_count;
-    uint32_t  capacity;
+/* NAT bucket */
+typedef struct {
+    uint16_t bucket_id;
+    uint16_t zone_id;
+    uint16_t slot_count;
+    uint16_t _pad;
+    uint32_t epoch;
+    mdn_session_t *slots;
 } mdn_nat_bucket_t;
 
-/* ------------------------------------------------------------------ */
-/* Session cursor: iterator over the session table                      */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_session_cursor {
-    uint32_t   bucket_idx;
-    uint32_t   slot_idx;
-    uint64_t   last_seen_id;
-    mdn_session_t *current;
+/* Session cursor */
+typedef struct {
+    uint16_t cursor_id;
+    uint16_t bucket_id;
+    uint32_t seen_epoch;
+    mdn_session_t *slot_ptr;
+    uint32_t slot_index;
 } mdn_session_cursor_t;
 
-/* ------------------------------------------------------------------ */
-/* Template descriptor and packet template (extended)                  */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_tmpl_desc {
-    uint16_t  field_id;
-    uint16_t  offset;
-    uint16_t  length;
-    uint8_t   flags;
-    uint8_t   _pad;
+/* Template descriptor */
+typedef struct {
+    uint16_t field_off;
+    uint16_t field_len;
+    uint16_t field_type;
+    uint16_t field_src;
 } mdn_tmpl_desc_t;
 
-typedef struct mdn_export_profile mdn_export_profile_t; /* forward */
-
-typedef struct mdn_packet_template {
-    uint32_t           tmpl_id;
-    uint32_t           zone_id;
-    uint16_t           total_length;
-    uint16_t           field_count;
-    uint8_t            header[64];
-    /* extended fields */
-    mdn_tmpl_desc_t   *descs;
-    uint32_t           desc_count;
-    mdn_export_profile_t *profile;
+/* Packet template (with descriptor extension) */
+typedef struct {
+    uint16_t tmpl_id;
+    uint16_t hdr_len;
+    uint16_t frag_count;
+    uint16_t flags;
+    uint8_t *hdr_bytes;
+    uint32_t hdr_cap;
+    uint16_t profile;       /* 0=base, 1=encapsulated */
+    uint16_t desc_count;
+    mdn_tmpl_desc_t *descs;
 } mdn_packet_template_t;
 
-/* ------------------------------------------------------------------ */
-/* Audit directory entry and window                                     */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_audit_dirent {
-    uint64_t  timestamp;
-    uint32_t  rule_id;
-    uint32_t  zone_id;
-    uint8_t   action;
-    uint8_t   _pad[3];
+/* Audit directory entry */
+typedef struct {
+    uint32_t off;
+    uint16_t len;
+    uint16_t kind;
 } mdn_audit_dirent_t;
 
-typedef struct mdn_audit_window {
-    mdn_audit_dirent_t *entries;
-    uint32_t            capacity;
-    uint32_t            count;
-    uint32_t            head;    /* ring-buffer write cursor */
-    uint32_t            _pad;
+/* Audit window */
+typedef struct {
+    uint16_t win_id;
+    uint16_t flags;
+    uint32_t heap_len;
+    uint32_t dir_count;
+    uint8_t *heap;
+    mdn_audit_dirent_t *dir;
 } mdn_audit_window_t;
 
-/* ------------------------------------------------------------------ */
-/* Export field and profile                                             */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_export_field {
-    uint16_t  field_id;
-    uint16_t  offset;
-    uint16_t  length;
-    uint8_t   encode; /* 0=raw 1=varint 2=string */
-    uint8_t   _pad;
+/* Export field */
+typedef struct {
+    uint16_t field_id;
+    uint16_t offset;
+    uint16_t width;
+    uint16_t source;
 } mdn_export_field_t;
 
-struct mdn_export_profile {
-    uint32_t          profile_id;
-    uint32_t          zone_id;
-    mdn_export_field_t fields[MDN_EXPORT_FIELDS_MAX];
-    uint32_t          field_count;
-};
+/* Export profile */
+typedef struct {
+    uint16_t profile_id;
+    uint16_t mode;
+    uint16_t field_count;
+    uint16_t frame_cap;
+    mdn_export_field_t *fields;
+    uint8_t *frame;
+} mdn_export_profile_t;
 
-/* ------------------------------------------------------------------ */
-/* Query: policy lookup request                                         */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_query {
-    uint32_t  query_id;
-    uint32_t  zone_id;
-    uint8_t   src_addr[16];
-    uint8_t   dst_addr[16];
-    uint16_t  src_port;
-    uint16_t  dst_port;
-    uint8_t   proto;
-    uint8_t   _pad[3];
-    uint32_t  result_rule_id;
-    uint8_t   result_action;
-    uint8_t   _pad2[3];
+/* Query */
+typedef struct {
+    uint16_t query_id;
+    uint16_t start_rule;
+    uint16_t zone_id;
+    uint16_t template_id;
+    uint32_t flags;
 } mdn_query_t;
 
-/* ------------------------------------------------------------------ */
-/* Capability token (capability section payload)                        */
-/* ------------------------------------------------------------------ */
-typedef struct mdn_cap_token {
-    uint8_t   token[MDN_CAP_TOKEN_LEN];
-    uint32_t  level;
-    uint32_t  _pad;
-} mdn_cap_token_t;
-
-/* ------------------------------------------------------------------ */
-/* Main context struct                                                  */
-/* ------------------------------------------------------------------ */
+/* Main context */
 struct mdn_ctx {
-    /* raw input */
-    const uint8_t       *buf;
-    size_t               len;
+    uint16_t flags;
+    uint16_t query_count;
+    uint8_t  cap_token[MDN_CAP_TOKEN_LEN];
+    uint64_t cap_nonce;
+    int      cap_ok;
 
-    /* parsed sections */
-    uint32_t             section_count;
-    uint8_t              section_types[MDN_MAX_SECTIONS];
-    uint32_t             section_offsets[MDN_MAX_SECTIONS];
-    uint32_t             section_lengths[MDN_MAX_SECTIONS];
-
-    /* capability */
-    mdn_cap_token_t      cap;
-    uint8_t              cap_token[MDN_CAP_TOKEN_LEN];
-    uint64_t             cap_nonce;
-    int                  cap_ok;
-    uint16_t             flags;        /* MDN_FLAG_* */
-    uint16_t             _pad0;
-
-    /* zones */
-    mdn_zone_t           zones[MDN_MAX_ZONES];
-    uint32_t             zone_count;
-
-    /* rules */
-    mdn_rule_node_t      rule_store[MDN_MAX_RULES];
+    mdn_zone_t          *zones[MDN_MAX_ZONES];
+    mdn_rule_node_t     *rules;
     uint32_t             rule_count;
-    mdn_rule_node_t     *rule_head;
 
-    /* prefixes */
-    mdn_prefix_page_t    prefix_pages[MDN_MAX_PREFIX_PAGES];
-    uint32_t             prefix_page_count;
+    mdn_prefix_page_t   *prefix_pages[MDN_MAX_PREFIX_PAGES];
+    mdn_nat_bucket_t    *nat_buckets[MDN_MAX_NAT_BUCKETS];
+    mdn_session_cursor_t *cursors;
+    uint32_t             cursor_count;
 
-    /* NAT */
-    mdn_nat_bucket_t     nat_buckets[MDN_MAX_NAT_BUCKETS];
-    uint32_t             nat_bucket_count;
+    mdn_packet_template_t *templates;
+    uint32_t               template_count;
 
-    /* sessions */
-    mdn_session_t        sessions[MDN_MAX_QUERIES]; /* active session pool */
-    uint32_t             session_count;
-    mdn_session_cursor_t cursor;
+    mdn_audit_window_t  *audit_windows;
+    uint32_t             audit_count;
 
-    /* templates */
-    mdn_packet_template_t templates[MDN_MAX_SECTIONS];
-    uint32_t              template_count;
+    mdn_export_profile_t *exports;
+    uint32_t              export_count;
 
-    /* audit */
-    mdn_audit_window_t   audit;
-
-    /* export */
-    mdn_export_profile_t export_profiles[MDN_MAX_SECTIONS];
-    uint32_t             export_profile_count;
-
-    /* queries */
-    mdn_query_t          queries[MDN_MAX_QUERIES];
-    uint32_t             query_count;
+    mdn_query_t queries[MDN_MAX_QUERIES];
 };
 
 #endif /* MDN_INTERNAL_H */
