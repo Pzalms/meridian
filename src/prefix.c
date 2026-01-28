@@ -67,7 +67,7 @@ void prefix_normalize_pages(mdn_ctx_t *ctx) {
         pg->stride     = (uint16_t)new_stride;
         pg->item_count = new_count;
         pg->kind       = PREFIX_KIND_V4;
-        /* dir[] and dir_count are NOT updated — stale offsets remain */
+        /* dir[] and dir_count are NOT updated — prior offsets remain */
     }
 }
 

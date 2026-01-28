@@ -12,10 +12,10 @@ int trie_lookup_prefix(mdn_ctx_t *ctx, uint32_t page_id, uint32_t query_key) {
 
     for (uint32_t k = 0; k < pg->dir_count; k++) {
         uint32_t off = pg->dir[k];
-        /* bounds check uses item_count * stride — passes for stale dir entries
+        /* bounds check uses item_count * stride — passes for dir entries
            whose off value happens to be < new item_count * new_stride         */
         if (off >= (uint32_t)(pg->item_count * pg->stride)) continue;
-        /* M52 CRASH: off is a stale old-layout offset; reading stride bytes from
+        /* off is a prior-layout offset; reading stride bytes from
            pg->items + off may reach past the end of the compact allocation      */
         uint8_t entry[8];
         memcpy(entry, pg->items + off, pg->stride);   /* reads from compact allocation */
