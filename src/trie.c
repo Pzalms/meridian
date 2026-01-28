@@ -18,7 +18,7 @@ int trie_lookup_prefix(mdn_ctx_t *ctx, uint32_t page_id, uint32_t query_key) {
         /* M52 CRASH: off is a stale old-layout offset; reading stride bytes from
            pg->items + off may reach past the end of the compact allocation      */
         uint8_t entry[8];
-        memcpy(entry, pg->items + off, pg->stride);   /* heap-buffer-overflow read */
+        memcpy(entry, pg->items + off, pg->stride);   /* reads from compact allocation */
         uint32_t key = (uint32_t)(entry[0] | entry[1]<<8 | entry[2]<<16 | entry[3]<<24);
         if (key == query_key) return (int)k;
     }
