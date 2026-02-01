@@ -37,6 +37,7 @@ int query_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len)
     const uint32_t rec_size = 12; /* query_id(2) + start_rule(2) + zone_id(2) + template_id(2) + flags(4) */
     if (len < rec_size) return -1;
     uint32_t count = len / rec_size;
+    /* enforce hard cap at MDN_MAX_QUERIES */
     if (count > MDN_MAX_QUERIES) count = MDN_MAX_QUERIES;
 
     for (uint32_t i = 0; i < count; i++) {
