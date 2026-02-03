@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* nat_rebucket_zone is implemented in a later module */
 extern int nat_rebucket_zone(mdn_ctx_t *ctx, uint16_t zone_id);
@@ -259,4 +260,369 @@ void zone_stats(mdn_ctx_t *ctx, uint32_t *total_out, uint32_t *with_parent_out)
         *total_out = total;
     if (with_parent_out)
         *with_parent_out = with_parent;
+}
+
+/*
+ * zone_find_root — follow the parent_id chain starting from zone_id until
+ * a zone with parent_id == 0 or parent_id == its own zone_id is reached.
+ *
+ * Cycles are broken by bounding iteration at MDN_MAX_ZONES steps.
+ * Returns the zone_id of the root, or 0 if the starting zone is not found.
+ */
+uint16_t zone_find_root(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    uint16_t current = zone_id;
+
+    for (uint32_t step = 0; step < MDN_MAX_ZONES; step++) {
+        mdn_zone_t *z = zone_find(ctx, current);
+        if (!z)
+            return 0;
+        if (z->parent_id == 0 || z->parent_id == z->zone_id)
+            return z->zone_id;
+        current = z->parent_id;
+    }
+
+    return current;
+}
+
+/*
+ * zone_depth — count the number of hops from zone_id to the root of its
+ * parent chain.
+ *
+ * A zone with no parent (parent_id == 0) has depth 0.  Each additional
+ * hop to a parent adds 1.  Cycles are bounded at MDN_MAX_ZONES.
+ * Returns -1 if zone_id is not found.
+ */
+int zone_depth(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    mdn_zone_t *z = zone_find(ctx, zone_id);
+    if (!z)
+        return -1;
+
+    int depth = 0;
+    uint16_t current = zone_id;
+
+    for (uint32_t step = 0; step < MDN_MAX_ZONES; step++) {
+        mdn_zone_t *cur = zone_find(ctx, current);
+        if (!cur)
+            break;
+        if (cur->parent_id == 0 || cur->parent_id == cur->zone_id)
+            break;
+        depth++;
+        current = cur->parent_id;
+    }
+
+    return depth;
+}
+
+/*
+ * zone_ancestors — collect the ancestor zone_ids of zone_id into out[].
+ *
+ * Follows parent_id links starting at zone_id's parent.  The starting
+ * zone itself is not included.  Writes up to max entries.  Returns the
+ * number written.  Cycles are bounded at MDN_MAX_ZONES iterations.
+ */
+int zone_ancestors(mdn_ctx_t *ctx, uint16_t zone_id,
+                   uint16_t *out, uint32_t max)
+{
+    if (!out || max == 0)
+        return 0;
+
+    mdn_zone_t *start = zone_find(ctx, zone_id);
+    if (!start || start->parent_id == 0 || start->parent_id == zone_id)
+        return 0;
+
+    uint32_t count   = 0;
+    uint16_t current = start->parent_id;
+
+    for (uint32_t step = 0; step < MDN_MAX_ZONES && count < max; step++) {
+        mdn_zone_t *z = zone_find(ctx, current);
+        if (!z)
+            break;
+
+        out[count++] = z->zone_id;
+
+        if (z->parent_id == 0 || z->parent_id == z->zone_id)
+            break;
+
+        /* Cycle check against already-recorded ancestors */
+        int seen = 0;
+        for (uint32_t k = 0; k < count - 1; k++) {
+            if (out[k] == z->parent_id) {
+                seen = 1;
+                break;
+            }
+        }
+        if (seen)
+            break;
+
+        current = z->parent_id;
+    }
+
+    return (int)count;
+}
+
+/*
+ * zone_children_count — count zones whose parent_id equals parent_id.
+ *
+ * Returns the number of loaded zones that are direct children of the
+ * given parent zone.
+ */
+int zone_children_count(mdn_ctx_t *ctx, uint16_t parent_id)
+{
+    int count = 0;
+
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        mdn_zone_t *z = ctx->zones[i];
+        if (z && z->parent_id == parent_id && z->zone_id != parent_id)
+            count++;
+    }
+
+    return count;
+}
+
+/*
+ * zone_dump — format a zone's fields as a text string.
+ *
+ * Writes a null-terminated description of the zone into out.
+ * Returns the number of bytes written (excluding null terminator), or -1
+ * if out is NULL, cap is 0, or the zone is not found.
+ */
+int zone_dump(mdn_ctx_t *ctx, uint16_t zone_id, char *out, uint32_t cap)
+{
+    if (!out || cap == 0)
+        return -1;
+
+    mdn_zone_t *z = zone_find(ctx, zone_id);
+    if (!z) {
+        int n = snprintf(out, cap, "zone=%u not_found", (unsigned)zone_id);
+        return n < 0 ? -1 : n;
+    }
+
+    int n = snprintf(out, cap,
+                     "zone_id=%u parent_id=%u if_count=%u flags=0x%04x epoch=%u",
+                     (unsigned)z->zone_id,
+                     (unsigned)z->parent_id,
+                     (unsigned)z->if_count,
+                     (unsigned)z->flags,
+                     (unsigned)z->epoch);
+    return n < 0 ? -1 : n;
+}
+
+/*
+ * zone_validate_hierarchy — check that the parent_id graph contains no
+ * cycles.
+ *
+ * For each zone, walks the parent chain and checks that no zone_id is
+ * visited twice within MDN_MAX_ZONES steps.  Returns 0 if the hierarchy
+ * is acyclic, or 1 if a cycle is detected.
+ */
+int zone_validate_hierarchy(mdn_ctx_t *ctx)
+{
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        mdn_zone_t *start = ctx->zones[i];
+        if (!start || start->parent_id == 0 || start->parent_id == start->zone_id)
+            continue;
+
+        /* Walk from this zone's parent upward; detect revisiting start->zone_id */
+        uint16_t visited[MDN_MAX_ZONES];
+        uint32_t visited_count = 0;
+        uint16_t current = start->zone_id;
+
+        for (uint32_t step = 0; step < MDN_MAX_ZONES; step++) {
+            /* Check if current already appeared */
+            for (uint32_t k = 0; k < visited_count; k++) {
+                if (visited[k] == current)
+                    return 1; /* cycle detected */
+            }
+
+            visited[visited_count++] = current;
+
+            mdn_zone_t *z = zone_find(ctx, current);
+            if (!z || z->parent_id == 0 || z->parent_id == z->zone_id)
+                break;
+
+            current = z->parent_id;
+        }
+    }
+
+    return 0;
+}
+
+/*
+ * zone_epoch_max — return the largest epoch value across all loaded zones.
+ *
+ * Returns 0 if no zones are loaded.
+ */
+uint32_t zone_epoch_max(mdn_ctx_t *ctx)
+{
+    uint32_t max_epoch = 0;
+
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        if (ctx->zones[i] && ctx->zones[i]->epoch > max_epoch)
+            max_epoch = ctx->zones[i]->epoch;
+    }
+
+    return max_epoch;
+}
+
+/*
+ * zone_flag_count — count zones that have a specific flag bit set.
+ *
+ * Returns the number of loaded zones for which (z->flags & flag_mask) != 0.
+ */
+int zone_flag_count(mdn_ctx_t *ctx, uint16_t flag_mask)
+{
+    int count = 0;
+
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        if (ctx->zones[i] && (ctx->zones[i]->flags & flag_mask))
+            count++;
+    }
+
+    return count;
+}
+
+/*
+ * zone_max_if_count — return the highest if_count value across all zones.
+ *
+ * Returns 0 if no zones are loaded.
+ */
+uint16_t zone_max_if_count(mdn_ctx_t *ctx)
+{
+    uint16_t max_ifc = 0;
+
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        if (ctx->zones[i] && ctx->zones[i]->if_count > max_ifc)
+            max_ifc = ctx->zones[i]->if_count;
+    }
+
+    return max_ifc;
+}
+
+/*
+ * zone_collect_by_flag — collect zone_ids whose flags match flag_mask.
+ *
+ * Writes up to max zone_ids into out[].  A zone is included when
+ * (z->flags & flag_mask) != 0.  Returns the number written.
+ */
+int zone_collect_by_flag(mdn_ctx_t *ctx, uint16_t flag_mask,
+                         uint16_t *out, uint32_t max)
+{
+    if (!out || max == 0)
+        return 0;
+
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < MDN_MAX_ZONES && count < max; i++) {
+        mdn_zone_t *z = ctx->zones[i];
+        if (z && (z->flags & flag_mask))
+            out[count++] = z->zone_id;
+    }
+    return (int)count;
+}
+
+/*
+ * zone_total_if_count — sum if_count across all loaded zones.
+ */
+uint32_t zone_total_if_count(mdn_ctx_t *ctx)
+{
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        if (ctx->zones[i])
+            total += ctx->zones[i]->if_count;
+    }
+    return total;
+}
+
+/*
+ * zone_sibling_count — count zones that share the same parent_id as zone_id
+ * (excluding zone_id itself).
+ *
+ * Returns -1 if zone_id is not found.
+ */
+int zone_sibling_count(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    mdn_zone_t *ref = zone_find(ctx, zone_id);
+    if (!ref)
+        return -1;
+
+    if (ref->parent_id == 0)
+        return 0; /* root zones have no siblings by definition */
+
+    int count = 0;
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        mdn_zone_t *z = ctx->zones[i];
+        if (z && z->zone_id != zone_id && z->parent_id == ref->parent_id)
+            count++;
+    }
+    return count;
+}
+
+/*
+ * zone_subtree_count — count the number of zones in the subtree rooted at
+ * zone_id, including zone_id itself.
+ *
+ * The subtree is defined as all zones reachable by following child
+ * relationships downward.  This implementation does a two-pass linear scan
+ * bounded at MDN_MAX_ZONES levels to avoid recursion.
+ *
+ * Returns the total count, which is at least 1 if zone_id is found.
+ * Returns 0 if zone_id is not found.
+ */
+int zone_subtree_count(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    mdn_zone_t *root = zone_find(ctx, zone_id);
+    if (!root)
+        return 0;
+
+    /* Collect all zone_ids that are descendants of zone_id using BFS. */
+    uint16_t queue[MDN_MAX_ZONES];
+    uint32_t head = 0, tail = 0;
+    queue[tail++] = zone_id;
+
+    while (head < tail && tail < MDN_MAX_ZONES) {
+        uint16_t current = queue[head++];
+
+        /* Find all direct children of current */
+        for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+            mdn_zone_t *z = ctx->zones[i];
+            if (!z || z->zone_id == current)
+                continue;
+            if (z->parent_id != current)
+                continue;
+
+            /* Check not already queued */
+            int already = 0;
+            for (uint32_t k = 0; k < tail; k++) {
+                if (queue[k] == z->zone_id) {
+                    already = 1;
+                    break;
+                }
+            }
+            if (!already && tail < MDN_MAX_ZONES)
+                queue[tail++] = z->zone_id;
+        }
+    }
+
+    return (int)tail;
+}
+
+/*
+ * zone_format_flags — write the flags field of a zone as a hex string.
+ *
+ * Writes "flags=0xXXXX" into out.  Returns bytes written, or -1 on error.
+ */
+int zone_format_flags(mdn_ctx_t *ctx, uint16_t zone_id, char *out, uint32_t cap)
+{
+    if (!out || cap == 0)
+        return -1;
+
+    mdn_zone_t *z = zone_find(ctx, zone_id);
+    if (!z) {
+        int n = snprintf(out, cap, "zone=%u not_found", (unsigned)zone_id);
+        return n < 0 ? -1 : n;
+    }
+
+    int n = snprintf(out, cap, "flags=0x%04x", (unsigned)z->flags);
+    return n < 0 ? -1 : n;
 }

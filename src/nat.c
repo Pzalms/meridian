@@ -1,5 +1,7 @@
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 #include "nat.h"
 #include "cap.h"
 
@@ -279,4 +281,340 @@ int nat_serialize_bucket(mdn_nat_bucket_t *bkt, uint8_t *out, uint32_t cap)
     }
 
     return (int)needed;
+}
+
+/*
+ * nat_bucket_age — evict sessions in a single bucket that are older than
+ * cutoff_epoch.
+ *
+ * Sessions whose last_seen value is strictly less than cutoff_epoch are
+ * removed.  Remaining sessions are compacted in place.  Returns the number
+ * of sessions evicted, or -1 if the bucket is not found.
+ */
+int nat_bucket_age(mdn_ctx_t *ctx, uint16_t bucket_id, uint32_t cutoff_epoch)
+{
+    mdn_nat_bucket_t *bkt = nat_find_bucket(ctx, bucket_id);
+    if (!bkt)
+        return -1;
+
+    uint16_t write = 0;
+    int evicted = 0;
+
+    for (uint16_t r = 0; r < bkt->slot_count; r++) {
+        if (bkt->slots[r].last_seen < cutoff_epoch) {
+            evicted++;
+        } else {
+            if (write != r)
+                bkt->slots[write] = bkt->slots[r];
+            write++;
+        }
+    }
+
+    if (evicted > 0) {
+        bkt->slot_count = write;
+        bkt->epoch++;
+    }
+    return evicted;
+}
+
+/*
+ * nat_bucket_hits_misses — collect per-bucket hit and miss counters.
+ *
+ * Scans all sessions in the bucket identified by bucket_id and tallies
+ * sessions whose flags have bit 0x0001 set (hit) versus clear (miss).
+ * Writes results into *hits_out and *misses_out.  Either pointer may be
+ * NULL.  Returns 0 on success, -1 if the bucket is not found.
+ */
+int nat_bucket_hits_misses(mdn_ctx_t *ctx, uint16_t bucket_id,
+                           uint32_t *hits_out, uint32_t *misses_out)
+{
+    mdn_nat_bucket_t *bkt = nat_find_bucket(ctx, bucket_id);
+    if (!bkt)
+        return -1;
+
+    uint32_t hits   = 0;
+    uint32_t misses = 0;
+
+    for (uint16_t i = 0; i < bkt->slot_count; i++) {
+        if (bkt->slots[i].flags & 0x0001)
+            hits++;
+        else
+            misses++;
+    }
+
+    if (hits_out)
+        *hits_out = hits;
+    if (misses_out)
+        *misses_out = misses;
+    return 0;
+}
+
+/*
+ * nat_zone_summary — format a text summary of NAT state for zone_id.
+ *
+ * Writes a null-terminated string into out_buf describing the number of
+ * buckets and total sessions belonging to zone_id.  Returns the number of
+ * bytes written (excluding the null terminator), or -1 if out_buf is NULL
+ * or cap is 0.
+ */
+int nat_zone_summary(mdn_ctx_t *ctx, uint16_t zone_id,
+                     char *out_buf, uint32_t cap)
+{
+    if (!out_buf || cap == 0)
+        return -1;
+
+    uint32_t bucket_n  = 0;
+    uint32_t session_n = 0;
+
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+        mdn_nat_bucket_t *bkt = ctx->nat_buckets[i];
+        if (!bkt || bkt->zone_id != zone_id)
+            continue;
+        bucket_n++;
+        session_n += bkt->slot_count;
+    }
+
+    int written = snprintf(out_buf, cap,
+                           "zone=%u buckets=%u sessions=%u",
+                           (unsigned)zone_id,
+                           (unsigned)bucket_n,
+                           (unsigned)session_n);
+    if (written < 0)
+        return -1;
+    return written;
+}
+
+/*
+ * nat_session_count — return the total number of sessions across all buckets.
+ */
+uint32_t nat_session_count(mdn_ctx_t *ctx)
+{
+    uint32_t total = 0;
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+        if (ctx->nat_buckets[i])
+            total += ctx->nat_buckets[i]->slot_count;
+    }
+    return total;
+}
+
+/*
+ * nat_evict_oldest — LRU eviction pass for a zone.
+ *
+ * Collects up to max_evict sessions with the smallest last_seen values
+ * across all buckets belonging to zone_id and removes them.  Buckets are
+ * compacted after removal.  Returns the number of sessions evicted.
+ */
+int nat_evict_oldest(mdn_ctx_t *ctx, uint16_t zone_id, uint32_t max_evict)
+{
+    if (max_evict == 0)
+        return 0;
+
+    /* Find the smallest last_seen threshold that covers max_evict sessions. */
+    uint32_t min_seen = UINT32_MAX;
+    uint32_t total    = 0;
+
+    /* Collect min last_seen across buckets for this zone */
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+        mdn_nat_bucket_t *bkt = ctx->nat_buckets[i];
+        if (!bkt || bkt->zone_id != zone_id)
+            continue;
+        for (uint16_t k = 0; k < bkt->slot_count; k++) {
+            if (bkt->slots[k].last_seen < min_seen)
+                min_seen = bkt->slots[k].last_seen;
+            total++;
+        }
+    }
+
+    if (total == 0)
+        return 0;
+
+    /* Evict sessions at or equal to the minimum timestamp up to max_evict. */
+    int evicted = 0;
+
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS && (uint32_t)evicted < max_evict; i++) {
+        mdn_nat_bucket_t *bkt = ctx->nat_buckets[i];
+        if (!bkt || bkt->zone_id != zone_id)
+            continue;
+
+        uint16_t write = 0;
+        int removed = 0;
+
+        for (uint16_t r = 0; r < bkt->slot_count; r++) {
+            if ((uint32_t)evicted < max_evict &&
+                bkt->slots[r].last_seen == min_seen) {
+                evicted++;
+                removed++;
+            } else {
+                if (write != r)
+                    bkt->slots[write] = bkt->slots[r];
+                write++;
+            }
+        }
+
+        if (removed > 0) {
+            bkt->slot_count = write;
+            bkt->epoch++;
+        }
+    }
+
+    return evicted;
+}
+
+/*
+ * nat_tuple_hash — compute a fast hash of a session tuple.
+ *
+ * Uses a FNV-1a variant over the bytes of the tuple.  Returns a 32-bit
+ * hash value.  tuple may be NULL only if len is 0.
+ */
+uint32_t nat_tuple_hash(const uint8_t *tuple, uint32_t len)
+{
+    uint32_t h = 2166136261U;
+    for (uint32_t i = 0; i < len; i++) {
+        h ^= (uint32_t)tuple[i];
+        h *= 16777619U;
+    }
+    return h;
+}
+
+/*
+ * nat_bucket_fill_ratio — return the fill ratio of a bucket as a
+ * fixed-point value in units of 1/1000 (i.e. 1000 == 100%).
+ *
+ * The capacity is defined as the next power-of-two above slot_count, with
+ * a minimum of 8.  Returns -1 if the bucket is not found.
+ */
+int nat_bucket_fill_ratio(mdn_ctx_t *ctx, uint16_t bucket_id)
+{
+    mdn_nat_bucket_t *bkt = nat_find_bucket(ctx, bucket_id);
+    if (!bkt)
+        return -1;
+
+    /* Compute capacity: smallest power-of-two >= slot_count, min 8 */
+    uint32_t cap = 8;
+    while (cap < (uint32_t)bkt->slot_count)
+        cap <<= 1;
+
+    /* ratio in 1/1000 units */
+    return (int)(((uint32_t)bkt->slot_count * 1000U) / cap);
+}
+
+/*
+ * nat_bucket_epoch_advance — increment the epoch of a specific bucket.
+ *
+ * Returns the new epoch on success, or -1 if the bucket is not found.
+ * Advancing the epoch signals to any open cursors that the bucket layout
+ * may have changed.
+ */
+int nat_bucket_epoch_advance(mdn_ctx_t *ctx, uint16_t bucket_id)
+{
+    mdn_nat_bucket_t *bkt = nat_find_bucket(ctx, bucket_id);
+    if (!bkt)
+        return -1;
+    bkt->epoch++;
+    return (int)bkt->epoch;
+}
+
+/*
+ * nat_zone_max_epoch — return the highest epoch across all buckets
+ * belonging to zone_id.
+ *
+ * Returns 0 if zone_id has no buckets.
+ */
+uint32_t nat_zone_max_epoch(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    uint32_t max_ep = 0;
+
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+        mdn_nat_bucket_t *bkt = ctx->nat_buckets[i];
+        if (bkt && bkt->zone_id == zone_id && bkt->epoch > max_ep)
+            max_ep = bkt->epoch;
+    }
+
+    return max_ep;
+}
+
+/*
+ * nat_session_flags_or — bitwise OR the flags of all sessions in zone_id.
+ *
+ * Returns the combined flags word.  Returns 0 if no sessions exist.
+ */
+uint16_t nat_session_flags_or(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    uint16_t combined = 0;
+
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+        mdn_nat_bucket_t *bkt = ctx->nat_buckets[i];
+        if (!bkt || bkt->zone_id != zone_id)
+            continue;
+        for (uint16_t k = 0; k < bkt->slot_count; k++)
+            combined |= bkt->slots[k].flags;
+    }
+
+    return combined;
+}
+
+/*
+ * nat_compact_buckets — remove NULL bucket slots by shifting non-NULL
+ * entries toward index 0.
+ *
+ * After compaction, all non-NULL entries occupy the lowest indices of
+ * ctx->nat_buckets[].  Trailing slots are set to NULL.  Returns the
+ * number of non-NULL buckets present after compaction.
+ *
+ * Note: after calling this function bucket_id-based fast lookup via
+ * (bucket_id % MDN_MAX_NAT_BUCKETS) is no longer valid; use the linear
+ * scan in nat_find_bucket instead.
+ */
+int nat_compact_buckets(mdn_ctx_t *ctx)
+{
+    int write = 0;
+
+    for (int read = 0; read < MDN_MAX_NAT_BUCKETS; read++) {
+        if (ctx->nat_buckets[read]) {
+            if (write != read) {
+                ctx->nat_buckets[write] = ctx->nat_buckets[read];
+                ctx->nat_buckets[read]  = NULL;
+            }
+            write++;
+        }
+    }
+
+    return write;
+}
+
+/*
+ * nat_bucket_zone_remap — update the zone_id of a single bucket.
+ *
+ * Returns 0 on success, -1 if the bucket is not found.
+ */
+int nat_bucket_zone_remap(mdn_ctx_t *ctx, uint16_t bucket_id, uint16_t new_zone_id)
+{
+    mdn_nat_bucket_t *bkt = nat_find_bucket(ctx, bucket_id);
+    if (!bkt)
+        return -1;
+    bkt->zone_id = new_zone_id;
+    return 0;
+}
+
+/*
+ * nat_session_max_last_seen — return the highest last_seen value across
+ * all sessions in zone_id.
+ *
+ * Returns 0 if no sessions exist for the zone.
+ */
+uint32_t nat_session_max_last_seen(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    uint32_t max_ts = 0;
+
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+        mdn_nat_bucket_t *bkt = ctx->nat_buckets[i];
+        if (!bkt || bkt->zone_id != zone_id)
+            continue;
+        for (uint16_t k = 0; k < bkt->slot_count; k++) {
+            if (bkt->slots[k].last_seen > max_ts)
+                max_ts = bkt->slots[k].last_seen;
+        }
+    }
+
+    return max_ts;
 }
