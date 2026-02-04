@@ -44,6 +44,9 @@ int export_profile_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint1
     uint16_t mode        = rd16(data + pos); pos += 2;
     uint16_t field_count = rd16(data + pos); pos += 2;
 
+    /* cap field_count at the compile-time maximum */
+    if (field_count > MDN_EXPORT_FIELDS_MAX) return -1;
+
     /* each field: field_id(2) + offset(2) + width(2) + source(2) = 8 bytes */
     if (len - pos < (uint32_t)field_count * 8u) return -1;
 
