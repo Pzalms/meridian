@@ -334,3 +334,40 @@ void mdn_stats_snapshot(const mdn_ctx_t *ctx,
     if (sections_loaded)
         *sections_loaded = ctx->stats_sections_loaded;
 }
+
+/*
+ * mdn_zone_summary — convenience wrapper that writes zone hierarchy stats
+ * into out using zone_summary_stats.
+ *
+ * Returns bytes written, or -1 on error.
+ */
+int mdn_zone_summary(const mdn_ctx_t *ctx, char *out, uint32_t cap)
+{
+    if (!ctx || !out || cap == 0)
+        return -1;
+    return zone_summary_stats((mdn_ctx_t *)ctx, out, cap);
+}
+
+/*
+ * mdn_nat_zone_summary — convenience wrapper around nat_zone_summary for
+ * use from the public-facing layer.
+ *
+ * Returns bytes written, or -1 on error.
+ */
+int mdn_nat_zone_summary(const mdn_ctx_t *ctx, uint16_t zone_id,
+                         char *out, uint32_t cap)
+{
+    if (!ctx || !out || cap == 0)
+        return -1;
+    return nat_zone_summary((mdn_ctx_t *)ctx, zone_id, out, cap);
+}
+
+/*
+ * mdn_query_count — return the number of queries loaded in the context.
+ */
+uint32_t mdn_query_count(const mdn_ctx_t *ctx)
+{
+    if (!ctx)
+        return 0;
+    return (uint32_t)ctx->query_count;
+}

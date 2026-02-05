@@ -626,3 +626,67 @@ int zone_format_flags(mdn_ctx_t *ctx, uint16_t zone_id, char *out, uint32_t cap)
     int n = snprintf(out, cap, "flags=0x%04x", (unsigned)z->flags);
     return n < 0 ? -1 : n;
 }
+
+/*
+ * zone_leaf_count — count zones that have no children (leaf nodes).
+ *
+ * A zone is a leaf if no other loaded zone has its zone_id as a parent_id.
+ * Returns the number of leaf zones.
+ */
+int zone_leaf_count(mdn_ctx_t *ctx)
+{
+    int leaves = 0;
+
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        mdn_zone_t *z = ctx->zones[i];
+        if (!z)
+            continue;
+
+        int has_child = 0;
+        for (uint32_t j = 0; j < MDN_MAX_ZONES; j++) {
+            mdn_zone_t *c = ctx->zones[j];
+            if (c && c->zone_id != z->zone_id && c->parent_id == z->zone_id) {
+                has_child = 1;
+                break;
+            }
+        }
+        if (!has_child)
+            leaves++;
+    }
+
+    return leaves;
+}
+
+/*
+ * zone_summary_stats — write a summary line with all key stats to out.
+ *
+ * Writes: total zones, root count, leaf count, max depth, max epoch.
+ * Returns bytes written, or -1 on error.
+ */
+int zone_summary_stats(mdn_ctx_t *ctx, char *out, uint32_t cap)
+{
+    if (!out || cap == 0)
+        return -1;
+
+    uint32_t total = 0;
+    uint32_t roots = 0;
+    uint32_t max_epoch = 0;
+
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        mdn_zone_t *z = ctx->zones[i];
+        if (!z)
+            continue;
+        total++;
+        if (z->parent_id == 0 || z->parent_id == z->zone_id)
+            roots++;
+        if (z->epoch > max_epoch)
+            max_epoch = z->epoch;
+    }
+
+    int leaves = zone_leaf_count(ctx);
+
+    int n = snprintf(out, cap,
+                     "total=%u roots=%u leaves=%u max_epoch=%u",
+                     total, roots, (unsigned)leaves, max_epoch);
+    return n < 0 ? -1 : n;
+}

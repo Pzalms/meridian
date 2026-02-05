@@ -35,5 +35,7 @@ int         zone_sibling_count(mdn_ctx_t *ctx, uint16_t zone_id);
 int         zone_subtree_count(mdn_ctx_t *ctx, uint16_t zone_id);
 int         zone_format_flags(mdn_ctx_t *ctx, uint16_t zone_id,
                                char *out, uint32_t cap);
+int         zone_leaf_count(mdn_ctx_t *ctx);
+int         zone_summary_stats(mdn_ctx_t *ctx, char *out, uint32_t cap);
 
 #endif /* MDN_ZONE_H */
