@@ -41,6 +41,9 @@ int audit_window_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint16_
     if (len - pos < 4) return -1;
     uint32_t dir_count = rd32(data + pos); pos += 4;
 
+    /* guard against unreasonably large dir_count before allocation */
+    if (dir_count > 65535u) return -1;
+
     /* each dir entry: off(4) + len(2) + kind(2) = 8 bytes */
     if (len - pos < dir_count * 8u) return -1;
 
