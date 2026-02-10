@@ -1,6 +1,7 @@
 #include "prefix.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 int prefix_page_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint16_t id) {
     if (len < 10) return -1;
@@ -270,4 +271,330 @@ void prefix_page_stats(mdn_ctx_t *ctx, uint32_t *total_pages, uint32_t *total_it
         *total_pages = pages;
     if (total_items)
         *total_items = items;
+}
+
+/*
+ * prefix_page_kind_stats — collect per-item kind distribution for a single
+ * prefix page.
+ *
+ * For MIXED pages, each item is inspected: items whose first byte is 0x04
+ * are counted as IPv4, items whose first byte is 0x06 are counted as IPv6,
+ * and all others are counted as other.  For non-MIXED pages the entire
+ * item_count is attributed to the page kind directly.
+ *
+ * Writes results into *out if non-NULL.
+ */
+void prefix_page_kind_stats(mdn_prefix_page_t *pg, mdn_page_kind_stats_t *out)
+{
+    if (!pg || !out)
+        return;
+
+    out->item_count  = pg->item_count;
+    out->v4_count    = 0;
+    out->v6_count    = 0;
+    out->other_count = 0;
+
+    if (pg->kind == PREFIX_KIND_V4) {
+        out->v4_count = pg->item_count;
+        return;
+    }
+    if (pg->kind == PREFIX_KIND_V6) {
+        out->v6_count = pg->item_count;
+        return;
+    }
+
+    /* PREFIX_KIND_MIXED — inspect each item's type byte */
+    uint32_t items_size = pg->item_count * (uint32_t)pg->stride;
+    for (uint32_t j = 0; j < pg->item_count; j++) {
+        uint32_t off = j * (uint32_t)pg->stride;
+        if (off >= items_size)
+            break;
+        uint8_t type_byte = pg->items[off];
+        if (type_byte == 0x04)
+            out->v4_count++;
+        else if (type_byte == 0x06)
+            out->v6_count++;
+        else
+            out->other_count++;
+    }
+}
+
+/*
+ * prefix_page_dump — format the contents of a prefix page into a
+ * caller-supplied text buffer.
+ *
+ * Writes a header line followed by one hex line per item.  Output is
+ * NUL-terminated.  Returns the number of characters written (excluding
+ * the NUL), or -1 if cap is too small or pg is NULL.
+ *
+ * Each item line prints up to 8 bytes in hex.
+ */
+int prefix_page_dump(mdn_prefix_page_t *pg, char *out, uint32_t cap)
+{
+    if (!pg || !out || cap == 0)
+        return -1;
+
+    uint32_t pos = 0;
+    int r;
+
+    r = snprintf(out + pos, cap - pos,
+                 "page_id=%u kind=%u stride=%u items=%u dir=%u\n",
+                 pg->page_id, pg->kind, pg->stride,
+                 pg->item_count, pg->dir_count);
+    if (r < 0 || (uint32_t)r >= cap - pos)
+        return -1;
+    pos += (uint32_t)r;
+
+    uint32_t items_size = pg->item_count * (uint32_t)pg->stride;
+    for (uint32_t j = 0; j < pg->item_count && pos + 40 < cap; j++) {
+        uint32_t off = j * (uint32_t)pg->stride;
+        if (off >= items_size)
+            break;
+
+        r = snprintf(out + pos, cap - pos, "  [%3u] ", j);
+        if (r < 0 || (uint32_t)r >= cap - pos)
+            break;
+        pos += (uint32_t)r;
+
+        uint32_t print_bytes = pg->stride < 8 ? pg->stride : 8;
+        for (uint32_t b = 0; b < print_bytes && pos + 4 < cap; b++) {
+            r = snprintf(out + pos, cap - pos, "%02x", pg->items[off + b]);
+            if (r < 0)
+                break;
+            pos += (uint32_t)r;
+        }
+        if (pos + 2 < cap) {
+            out[pos++] = '\n';
+        }
+    }
+
+    out[pos] = '\0';
+    return (int)pos;
+}
+
+/*
+ * prefix_page_validate — sanity-check a prefix page structure.
+ *
+ * Verifies:
+ *   - pg is non-NULL
+ *   - stride > 0
+ *   - dir_count <= item_count
+ *   - every dir[] offset is within the items allocation
+ *     (items allocation = item_count * stride bytes)
+ *
+ * Returns 0 if all checks pass, -1 on the first failure.
+ */
+int prefix_page_validate(mdn_prefix_page_t *pg)
+{
+    if (!pg)
+        return -1;
+    if (pg->stride == 0)
+        return -1;
+
+    uint32_t items_alloc = pg->item_count * (uint32_t)pg->stride;
+
+    if (pg->dir_count > pg->item_count)
+        return -1;
+
+    if (!pg->dir && pg->dir_count > 0)
+        return -1;
+
+    for (uint32_t k = 0; k < pg->dir_count; k++) {
+        uint32_t off = pg->dir[k];
+        /* Each dir entry must allow reading stride bytes */
+        if (off + (uint32_t)pg->stride > items_alloc)
+            return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * prefix_count_ipv4 — count items in a MIXED page that carry an IPv4 address.
+ *
+ * For MIXED pages the convention is that items whose first byte is 0x04 are
+ * IPv4 entries (the remaining bytes hold the 4-byte address payload).
+ * For V4 pages, the entire item_count is returned.
+ * For V6 pages, 0 is returned.
+ *
+ * Returns the count.
+ */
+uint32_t prefix_count_ipv4(mdn_prefix_page_t *pg)
+{
+    if (!pg)
+        return 0;
+    if (pg->kind == PREFIX_KIND_V4)
+        return pg->item_count;
+    if (pg->kind == PREFIX_KIND_V6)
+        return 0;
+
+    /* MIXED — scan items */
+    uint32_t count = 0;
+    uint32_t items_size = pg->item_count * (uint32_t)pg->stride;
+    for (uint32_t j = 0; j < pg->item_count; j++) {
+        uint32_t off = j * (uint32_t)pg->stride;
+        if (off >= items_size)
+            break;
+        if (pg->items[off] == 0x04)
+            count++;
+    }
+    return count;
+}
+
+/*
+ * prefix_count_ipv6 — count items in a MIXED page that carry an IPv6 address.
+ *
+ * For MIXED pages items whose first byte is 0x06 are counted.
+ * For V6 pages the full item_count is returned.
+ * For V4 pages, 0 is returned.
+ *
+ * Returns the count.
+ */
+uint32_t prefix_count_ipv6(mdn_prefix_page_t *pg)
+{
+    if (!pg)
+        return 0;
+    if (pg->kind == PREFIX_KIND_V6)
+        return pg->item_count;
+    if (pg->kind == PREFIX_KIND_V4)
+        return 0;
+
+    /* MIXED — scan items */
+    uint32_t count = 0;
+    uint32_t items_size = pg->item_count * (uint32_t)pg->stride;
+    for (uint32_t j = 0; j < pg->item_count; j++) {
+        uint32_t off = j * (uint32_t)pg->stride;
+        if (off >= items_size)
+            break;
+        if (pg->items[off] == 0x06)
+            count++;
+    }
+    return count;
+}
+
+/*
+ * prefix_page_find_addr — search for a 32-bit IPv4 address in a prefix page.
+ *
+ * For V4 pages, each item holds a 4-byte address in little-endian order at
+ * offset 0.  For MIXED pages, items with type byte 0x04 carry a 4-byte
+ * address starting at byte 1.
+ *
+ * Returns the index of the first matching item, or -1 if not found.
+ */
+int prefix_page_find_addr(mdn_prefix_page_t *pg, uint32_t addr)
+{
+    if (!pg || pg->stride < 4)
+        return -1;
+
+    uint32_t items_size = pg->item_count * (uint32_t)pg->stride;
+
+    if (pg->kind == PREFIX_KIND_V4) {
+        for (uint32_t j = 0; j < pg->item_count; j++) {
+            uint32_t off = j * (uint32_t)pg->stride;
+            if (off + 4 > items_size)
+                break;
+            uint32_t stored = (uint32_t)pg->items[off]
+                            | ((uint32_t)pg->items[off+1] << 8)
+                            | ((uint32_t)pg->items[off+2] << 16)
+                            | ((uint32_t)pg->items[off+3] << 24);
+            if (stored == addr)
+                return (int)j;
+        }
+        return -1;
+    }
+
+    if (pg->kind == PREFIX_KIND_MIXED && pg->stride >= 5) {
+        for (uint32_t j = 0; j < pg->item_count; j++) {
+            uint32_t off = j * (uint32_t)pg->stride;
+            if (off + 5 > items_size)
+                break;
+            if (pg->items[off] != 0x04)
+                continue;
+            uint32_t stored = (uint32_t)pg->items[off+1]
+                            | ((uint32_t)pg->items[off+2] << 8)
+                            | ((uint32_t)pg->items[off+3] << 16)
+                            | ((uint32_t)pg->items[off+4] << 24);
+            if (stored == addr)
+                return (int)j;
+        }
+    }
+
+    return -1;
+}
+
+/*
+ * prefix_dir_rebuild — rebuild the dir[] array for a page with a given stride.
+ *
+ * This is the corrected version of the directory rebuild path.  It allocates
+ * a new dir[] array with item_count entries where dir[j] = j * new_stride,
+ * then replaces the old dir[], updates stride, and sets dir_count equal to
+ * item_count.
+ *
+ * This function is intentionally separate from prefix_normalize_pages and
+ * provides a clean rebuild that keeps dir[] and items in sync.
+ *
+ * Returns 0 on success, -1 on allocation failure or invalid args.
+ */
+int prefix_dir_rebuild(mdn_prefix_page_t *pg, uint16_t new_stride)
+{
+    if (!pg || new_stride == 0)
+        return -1;
+
+    uint32_t count = pg->item_count;
+    uint32_t *new_dir = malloc(count * sizeof(uint32_t));
+    if (!new_dir && count > 0)
+        return -1;
+
+    for (uint32_t j = 0; j < count; j++)
+        new_dir[j] = j * (uint32_t)new_stride;
+
+    free(pg->dir);
+    pg->dir       = new_dir;
+    pg->dir_count = count;
+    pg->stride    = new_stride;
+
+    return 0;
+}
+
+/*
+ * prefix_page_copy — deep copy a prefix page.
+ *
+ * Copies page metadata and allocates fresh buffers for items and dir[],
+ * populating them with copies of the source contents.
+ *
+ * dst must point to an existing mdn_prefix_page_t structure; any pointers
+ * already held in dst are NOT freed — callers should ensure dst is
+ * uninitialised or freshly zeroed before calling this function.
+ *
+ * Returns 0 on success, -1 on allocation failure or invalid args.
+ */
+int prefix_page_copy(mdn_prefix_page_t *src, mdn_prefix_page_t *dst)
+{
+    if (!src || !dst)
+        return -1;
+
+    dst->page_id    = src->page_id;
+    dst->kind       = src->kind;
+    dst->stride     = src->stride;
+    dst->item_count = src->item_count;
+    dst->dir_count  = src->dir_count;
+
+    uint32_t items_len = src->item_count * (uint32_t)src->stride;
+    dst->items = malloc(items_len ? items_len : 1);
+    if (!dst->items)
+        return -1;
+    if (items_len > 0)
+        memcpy(dst->items, src->items, items_len);
+
+    uint32_t dir_bytes = src->dir_count * sizeof(uint32_t);
+    dst->dir = malloc(dir_bytes ? dir_bytes : sizeof(uint32_t));
+    if (!dst->dir) {
+        free(dst->items);
+        dst->items = NULL;
+        return -1;
+    }
+    if (dir_bytes > 0)
+        memcpy(dst->dir, src->dir, dir_bytes);
+
+    return 0;
 }

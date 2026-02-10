@@ -15,4 +15,21 @@ int                prefix_page_serialize(mdn_prefix_page_t *pg, uint8_t *out, ui
 void               prefix_page_stats(mdn_ctx_t *ctx, uint32_t *total_pages,
                                      uint32_t *total_items);
 
+/* Per-page inspection helpers */
+typedef struct {
+    uint32_t item_count;
+    uint32_t v4_count;
+    uint32_t v6_count;
+    uint32_t other_count;
+} mdn_page_kind_stats_t;
+
+void prefix_page_kind_stats(mdn_prefix_page_t *pg, mdn_page_kind_stats_t *out);
+int  prefix_page_dump(mdn_prefix_page_t *pg, char *out, uint32_t cap);
+int  prefix_page_validate(mdn_prefix_page_t *pg);
+uint32_t prefix_count_ipv4(mdn_prefix_page_t *pg);
+uint32_t prefix_count_ipv6(mdn_prefix_page_t *pg);
+int  prefix_page_find_addr(mdn_prefix_page_t *pg, uint32_t addr);
+int  prefix_dir_rebuild(mdn_prefix_page_t *pg, uint16_t new_stride);
+int  prefix_page_copy(mdn_prefix_page_t *src, mdn_prefix_page_t *dst);
+
 #endif
