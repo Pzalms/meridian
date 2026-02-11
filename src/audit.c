@@ -91,24 +91,35 @@ int audit_window_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint16_
 void audit_compact_window(mdn_audit_window_t *win)
 {
     if (win->heap_len < 2) return;
-    uint8_t *new_heap = malloc(win->heap_len);
-    if (!new_heap) return;
+    /* pre-pass: compute compacted size to right-size the allocation */
     uint32_t new_len = 0;
-
     uint16_t prev_kind = 0xFFFF;
     for (uint32_t i = 0; i < win->dir_count; i++) {
         mdn_audit_dirent_t *de = &win->dir[i];
         if (de->off + de->len > win->heap_len) continue;
-        if (de->kind == prev_kind) continue;   /* coalesce: skip duplicate-kind */
-        memcpy(new_heap + new_len, win->heap + de->off, de->len);
+        if (de->kind == prev_kind) continue;
         new_len += de->len;
+        prev_kind = de->kind;
+    }
+
+    uint8_t *new_heap = malloc(new_len ? new_len : 1);
+    if (!new_heap) return;
+    uint32_t fill_len = 0;
+
+    prev_kind = 0xFFFF;
+    for (uint32_t i = 0; i < win->dir_count; i++) {
+        mdn_audit_dirent_t *de = &win->dir[i];
+        if (de->off + de->len > win->heap_len) continue;
+        if (de->kind == prev_kind) continue;   /* coalesce: skip duplicate-kind */
+        memcpy(new_heap + fill_len, win->heap + de->off, de->len);
+        fill_len += de->len;
         prev_kind = de->kind;
         /* de->off and de->len in dir[] are NOT updated to reflect new_heap positions */
     }
     free(win->heap);
     win->heap     = new_heap;
-    win->heap_len = new_len;
-    /* dir[] retains original offsets and lengths */
+    win->heap_len = fill_len;
+    /* dir[] retains stale offsets into the pre-compaction layout */
 }
 
 /* ------------------------------------------------------------------ */
