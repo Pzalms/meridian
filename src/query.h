@@ -29,4 +29,14 @@ int query_run_all(mdn_ctx_t *ctx);
  */
 int policy_patch_apply(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len);
 
+/* Query inspection and serialization utilities */
+int  query_serialize(mdn_query_t *q, uint8_t *out, uint32_t cap);
+int  query_deserialize(const uint8_t *data, uint32_t len, mdn_query_t *q_out);
+int  query_validate(mdn_ctx_t *ctx, mdn_query_t *q);
+int  query_dump(mdn_query_t *q, char *out, uint32_t cap);
+void query_clone(mdn_query_t *src, mdn_query_t *dst);
+int  query_find_by_zone(mdn_ctx_t *ctx, uint16_t zone_id,
+                        uint16_t *out, uint32_t max);
+int  query_count_by_action(mdn_ctx_t *ctx, uint32_t action);
+
 #endif /* MDN_QUERY_H */

@@ -18,4 +18,12 @@
  */
 int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out);
 
+/* DAG inspection utilities */
+int dag_find_cycle(mdn_ctx_t *ctx, uint32_t start_rule, uint32_t *cycle_len_out);
+int dag_count_reachable(mdn_ctx_t *ctx, uint32_t start_rule);
+int dag_dump_chain(mdn_ctx_t *ctx, uint32_t start_rule, char *out, uint32_t cap);
+void dag_action_histogram(mdn_ctx_t *ctx, uint32_t counts_out[7]);
+int dag_max_depth(mdn_ctx_t *ctx, uint32_t start_rule);
+int dag_node_summary(mdn_rule_node_t *node, char *out, uint32_t cap);
+
 #endif /* DAG_H */
