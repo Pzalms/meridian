@@ -2,6 +2,8 @@
 #include "crc.h"
 #include "util.h"
 #include <string.h>
+#include <stdio.h>
+#include <time.h>
 
 static const uint8_t CAP_TOKEN[MDN_CAP_TOKEN_LEN] = {
     0x4d,0x45,0x52,0x49,0x44,0x49,0x41,0x4e,
@@ -114,4 +116,125 @@ uint32_t mdn_cap_fingerprint(mdn_ctx_t *ctx)
 int mdn_cap_is_ephemeral(mdn_ctx_t *ctx)
 {
     return (ctx->cap_nonce & (UINT64_C(1) << 63)) ? 1 : 0;
+}
+
+/* -----------------------------------------------------------------------
+ * cap_audit_log_init — zero-initialise an audit log.
+ * ----------------------------------------------------------------------- */
+void cap_audit_log_init(cap_audit_log_t *log)
+{
+    if (!log)
+        return;
+    memset(log->entries, 0, sizeof(log->entries));
+    log->count = 0;
+    log->cap   = CAP_AUDIT_LOG_CAP;
+}
+
+/* -----------------------------------------------------------------------
+ * cap_audit_log_record — append one audit entry to the log.
+ *
+ * Records the current wall-clock second, purpose_id, and result code.
+ * When the log is full the oldest entry is overwritten (ring behaviour).
+ * Returns 0 on success, -1 when log is NULL.
+ * ----------------------------------------------------------------------- */
+int cap_audit_log_record(cap_audit_log_t *log, uint16_t purpose_id, int result)
+{
+    if (!log)
+        return -1;
+
+    uint32_t idx = log->count % CAP_AUDIT_LOG_CAP;
+    log->entries[idx].timestamp  = (uint64_t)time(NULL);
+    log->entries[idx].purpose_id = purpose_id;
+    log->entries[idx].result     = result;
+    log->count++;
+    return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * cap_audit_log_dump — format the audit log as text into out[0..cap).
+ *
+ * Each entry is one line:
+ *   "audit[N]: ts=T purpose=P result=R\n"
+ * Returns the number of bytes written (excluding NUL).
+ * ----------------------------------------------------------------------- */
+int cap_audit_log_dump(const cap_audit_log_t *log, char *out, uint32_t cap)
+{
+    if (!log || !out || cap == 0)
+        return 0;
+
+    uint32_t entries_to_show = MDN_MIN(log->count, (uint32_t)CAP_AUDIT_LOG_CAP);
+    int total = 0;
+
+    for (uint32_t i = 0; i < entries_to_show; i++) {
+        const cap_audit_entry_t *e = &log->entries[i];
+        int n = snprintf(out + total, cap - (uint32_t)total,
+                         "audit[%u]: ts=%llu purpose=%u result=%d\n",
+                         (unsigned)i,
+                         (unsigned long long)e->timestamp,
+                         (unsigned)e->purpose_id,
+                         e->result);
+        if (n < 0 || (uint32_t)(total + n) >= cap - 1u)
+            break;
+        total += n;
+    }
+    out[MDN_MIN((uint32_t)total, cap - 1u)] = '\0';
+    return total;
+}
+
+/* -----------------------------------------------------------------------
+ * cap_nonce_validate — verify that a presented nonce matches the
+ * context's stored nonce.
+ *
+ * A nonce is considered valid when it exactly matches ctx->cap_nonce and
+ * ctx->cap_ok is set.  This provides a lightweight replay-prevention
+ * check for single-session use.  Returns 1 when valid, 0 otherwise.
+ * ----------------------------------------------------------------------- */
+int cap_nonce_validate(const mdn_ctx_t *ctx, uint64_t nonce)
+{
+    if (!ctx)
+        return 0;
+    if (!ctx->cap_ok)
+        return 0;
+    return (ctx->cap_nonce == nonce) ? 1 : 0;
+}
+
+/* -----------------------------------------------------------------------
+ * cap_context_dump — format capability context state as text.
+ *
+ * Writes fields cap_ok, cap_nonce, and a hex fingerprint of the first
+ * 8 bytes of cap_token into out[0..cap).  Returns the number of bytes
+ * written.
+ * ----------------------------------------------------------------------- */
+int cap_context_dump(const mdn_ctx_t *ctx, char *out, uint32_t cap)
+{
+    if (!ctx || !out || cap == 0)
+        return 0;
+
+    /* Format the first 8 bytes of cap_token as hex */
+    char tok_hex[17];
+    mdn_bytes_to_hex(ctx->cap_token, 8u, tok_hex);
+
+    int n = snprintf(out, cap,
+                     "cap_ok=%d nonce=0x%016llx token_prefix=%s\n",
+                     ctx->cap_ok,
+                     (unsigned long long)ctx->cap_nonce,
+                     tok_hex);
+    if (n < 0)
+        n = 0;
+    if ((uint32_t)n >= cap)
+        n = (int)(cap - 1u);
+    out[n] = '\0';
+    return n;
+}
+
+/* -----------------------------------------------------------------------
+ * cap_token_to_hex — encode the 32-byte cap token as a hex string.
+ *
+ * out must be at least 65 bytes (64 hex digits + NUL).
+ * ----------------------------------------------------------------------- */
+void cap_token_to_hex(const mdn_ctx_t *ctx, char *out)
+{
+    if (!ctx || !out)
+        return;
+    mdn_bytes_to_hex(ctx->cap_token, MDN_CAP_TOKEN_LEN, out);
 }
