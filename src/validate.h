@@ -27,4 +27,15 @@ int validate_queries(mdn_ctx_t *ctx);
 /* Export profiles: field_count <= MDN_EXPORT_FIELDS_MAX. */
 int validate_exports(mdn_ctx_t *ctx);
 
+/* Extended validators */
+int validate_zone_refs(mdn_ctx_t *ctx);
+int validate_template_refs(mdn_ctx_t *ctx);
+int validate_rule_chain_lengths(mdn_ctx_t *ctx);
+int validate_nat_bucket_refs(mdn_ctx_t *ctx);
+int validate_prefix_pages_ext(mdn_ctx_t *ctx);
+int validate_audit_windows(mdn_ctx_t *ctx);
+int validate_export_profiles(mdn_ctx_t *ctx);
+int validate_query_refs(mdn_ctx_t *ctx);
+int validate_summary(mdn_ctx_t *ctx, char *out, uint32_t cap);
+
 #endif /* MDN_VALIDATE_H */

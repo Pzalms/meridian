@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 /* Forward declarations for section loaders implemented in other modules */
 extern int zone_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint16_t id);
@@ -354,4 +355,239 @@ int mdn_parse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
     (void)query_count; /* already stored above */
 
     return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * parse_section_type_name — return a string name for a section type.
+ *
+ * Returns a static string label for each well-known section type.
+ * Unknown types are returned as "UNKNOWN".
+ * ----------------------------------------------------------------------- */
+const char *parse_section_type_name(uint8_t type)
+{
+    switch (type) {
+    case SECT_CAP:          return "SECT_CAP";
+    case SECT_ZONE:         return "SECT_ZONE";
+    case SECT_RULE:         return "SECT_RULE";
+    case SECT_PREFIX:       return "SECT_PREFIX";
+    case SECT_NAT:          return "SECT_NAT";
+    case SECT_SESSION:      return "SECT_SESSION";
+    case SECT_TEMPLATE:     return "SECT_TEMPLATE";
+    case SECT_AUDIT:        return "SECT_AUDIT";
+    case SECT_EXPORT:       return "SECT_EXPORT";
+    case SECT_POLICY_PATCH: return "SECT_POLICY_PATCH";
+    case SECT_QUERY:        return "SECT_QUERY";
+    default:                return "UNKNOWN";
+    }
+}
+
+/* -----------------------------------------------------------------------
+ * parse_count_section_type — count sections of a given type in the table.
+ *
+ * Scans the section table and counts entries whose type byte matches the
+ * requested type.  Returns the count, or -1 when the buffer is malformed.
+ * ----------------------------------------------------------------------- */
+int parse_count_section_type(const uint8_t *buf, size_t len, uint8_t type)
+{
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+
+    int found = 0;
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *p = buf + MDN_HEADER_LEN + (size_t)i * SECT_ENTRY_LEN;
+        if (p[0] == type)
+            found++;
+    }
+    return found;
+}
+
+/* -----------------------------------------------------------------------
+ * Section iterator implementation.
+ *
+ * parse_section_iter_init and parse_section_iter_next walk the section
+ * table sequentially without copying data into a context.
+ * ----------------------------------------------------------------------- */
+
+/*
+ * Initialise an iterator for the section table in buf[0..len).
+ * Returns 0 on success, -1 when buf is malformed.
+ */
+int parse_section_iter_init(parse_section_iterator_t *it,
+                             const uint8_t *buf, size_t len)
+{
+    if (!it || !buf)
+        return -1;
+
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+
+    it->buf     = buf;
+    it->buf_len = len;
+    it->total   = count;
+    it->current = 0;
+    return 0;
+}
+
+/*
+ * Advance the iterator.  Returns 1 when an entry was written to
+ * *entry_out, 0 when all entries are consumed, -1 on error.
+ */
+int parse_section_iter_next(parse_section_iterator_t *it,
+                             parse_section_entry_t *entry_out)
+{
+    if (!it || !entry_out)
+        return -1;
+    if (it->current >= it->total)
+        return 0;
+
+    const uint8_t *p = it->buf + MDN_HEADER_LEN +
+                       (size_t)it->current * SECT_ENTRY_LEN;
+
+    entry_out->type       = p[0];
+    entry_out->sect_flags = p[1];
+    entry_out->id         = mdn_u16le(p + 2);
+    entry_out->offset     = mdn_u32le(p + 4);
+    entry_out->length     = mdn_u32le(p + 8);
+    entry_out->crc32      = mdn_u32le(p + 12);
+    entry_out->epoch      = mdn_u32le(p + 16);
+
+    it->current++;
+    return 1;
+}
+
+/* -----------------------------------------------------------------------
+ * parse_extract_section — find and expose a section payload.
+ *
+ * Searches the section table for the first entry whose type and id both
+ * match.  On success sets *data_out to the payload start and *len_out
+ * to the payload length.  Returns 0 on success, -1 if not found or if
+ * the buffer is malformed.
+ * ----------------------------------------------------------------------- */
+int parse_extract_section(const uint8_t *buf, size_t len,
+                           uint8_t type, uint16_t id,
+                           const uint8_t **data_out, uint32_t *len_out)
+{
+    if (!buf || !data_out || !len_out)
+        return -1;
+
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *p = buf + MDN_HEADER_LEN + (size_t)i * SECT_ENTRY_LEN;
+        uint8_t  t    = p[0];
+        uint16_t sid  = mdn_u16le(p + 2);
+        uint32_t off  = mdn_u32le(p + 4);
+        uint32_t slen = mdn_u32le(p + 8);
+
+        if (t != type || sid != id)
+            continue;
+        if ((size_t)off + (size_t)slen > len)
+            return -1;
+
+        *data_out = buf + off;
+        *len_out  = slen;
+        return 0;
+    }
+    return -1;
+}
+
+/* -----------------------------------------------------------------------
+ * parse_validate_table — pre-validate all section bounds.
+ *
+ * Confirms that every section's payload region lies within buf[0..len)
+ * and that the header's section count matches section_count.  Returns 0
+ * when all sections pass, -1 on first failure.
+ * ----------------------------------------------------------------------- */
+int parse_validate_table(const uint8_t *buf, size_t len, uint16_t section_count)
+{
+    if (!buf)
+        return -1;
+
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+
+    if (count != section_count)
+        return -1;
+
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *p = buf + MDN_HEADER_LEN + (size_t)i * SECT_ENTRY_LEN;
+        uint32_t off  = mdn_u32le(p + 4);
+        uint32_t slen = mdn_u32le(p + 8);
+
+        if ((size_t)off + (size_t)slen > len)
+            return -1;
+    }
+    return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * parse_header_summary — format header fields as text.
+ *
+ * Writes a one-line summary into out[0..cap).  Returns the number of
+ * bytes written (excluding NUL).
+ * ----------------------------------------------------------------------- */
+int parse_header_summary(const uint8_t *buf, size_t len, char *out, uint32_t cap)
+{
+    if (!buf || !out || cap == 0)
+        return 0;
+
+    if (len < MDN_HEADER_LEN) {
+        int n = snprintf(out, cap, "<buffer too short>\n");
+        return n < 0 ? 0 : (uint32_t)n >= cap ? (int)(cap - 1u) : n;
+    }
+
+    if (memcmp(buf, MDN_MAGIC, 4) != 0) {
+        int n = snprintf(out, cap, "<bad magic>\n");
+        return n < 0 ? 0 : (uint32_t)n >= cap ? (int)(cap - 1u) : n;
+    }
+
+    uint16_t flags  = mdn_u16le(buf + 4);
+    uint16_t nsect  = mdn_u16le(buf + 6);
+    uint16_t nquery = mdn_u16le(buf + 8);
+
+    int n = snprintf(out, cap,
+                     "magic=MDN1 flags=0x%04x sections=%u queries=%u\n",
+                     (unsigned)flags, (unsigned)nsect, (unsigned)nquery);
+    if (n < 0)
+        n = 0;
+    if ((uint32_t)n >= cap)
+        n = (int)(cap - 1u);
+    out[n] = '\0';
+    return n;
+}
+
+/* -----------------------------------------------------------------------
+ * parse_section_summary — format a section entry as text.
+ *
+ * Writes one line per section entry into out[0..cap).  Returns the
+ * number of bytes written (excluding NUL).
+ * ----------------------------------------------------------------------- */
+int parse_section_summary(const parse_section_entry_t *entry, char *out, uint32_t cap)
+{
+    if (!entry || !out || cap == 0)
+        return 0;
+
+    int n = snprintf(out, cap,
+                     "type=%-18s id=%u off=%u len=%u crc=0x%08x epoch=%u\n",
+                     parse_section_type_name(entry->type),
+                     (unsigned)entry->id,
+                     (unsigned)entry->offset,
+                     (unsigned)entry->length,
+                     (unsigned)entry->crc32,
+                     (unsigned)entry->epoch);
+    if (n < 0)
+        n = 0;
+    if ((uint32_t)n >= cap)
+        n = (int)(cap - 1u);
+    out[n] = '\0';
+    return n;
 }
