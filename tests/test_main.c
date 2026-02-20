@@ -2199,6 +2199,81 @@ static void test_extended(void)
         free(ctx);
     }
 
+    /* Extended NAT cursor boundary assertions */
+    {
+        mdn_ctx_t *ctx = calloc(1, sizeof(mdn_ctx_t));
+        ASSERT_NOT_NULL(ctx);
+
+        /* bucket_id >= MDN_MAX_NAT_BUCKETS -> rejected */
+        int rc = session_cursor_open(ctx, (uint16_t)MDN_MAX_NAT_BUCKETS, 0);
+        ASSERT_EQ(rc, -1);
+
+        /* bucket_id = MDN_MAX_NAT_BUCKETS - 1 but no bucket loaded -> -1 */
+        rc = session_cursor_open(ctx, (uint16_t)(MDN_MAX_NAT_BUCKETS - 1), 0);
+        ASSERT_EQ(rc, -1);
+
+        /* Load bucket at id=3, verify cursor opens */
+        uint8_t nb[10]; memset(nb, 0, sizeof(nb));
+        put_u16(nb+0, 3); put_u16(nb+2, 0); put_u16(nb+4, 0); put_u32(nb+6, 77);
+        rc = nat_bucket_load(ctx, nb, 10, 0);
+        ASSERT_EQ(rc, 0);
+        rc = session_cursor_open(ctx, 3, 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->cursors[0].bucket_id, 3);
+        ASSERT_EQ(ctx->cursors[0].seen_epoch, 77U);
+
+        /* cursor_next on empty bucket returns NULL */
+        mdn_session_t *s = session_cursor_next(ctx, &ctx->cursors[0]);
+        ASSERT_NULL(s);
+
+        /* second call also returns NULL */
+        s = session_cursor_next(ctx, &ctx->cursors[0]);
+        ASSERT_NULL(s);
+
+        /* Load bucket with 1 slot at id=8 */
+        uint8_t nb8[10 + 52]; memset(nb8, 0, sizeof(nb8));
+        put_u16(nb8+0, 8); put_u16(nb8+2, 2); put_u16(nb8+4, 1); put_u32(nb8+6, 55);
+        put_u32(nb8+10, 0xDEADBEEF);
+        rc = nat_bucket_load(ctx, nb8, sizeof(nb8), 0);
+        ASSERT_EQ(rc, 0);
+        rc = session_cursor_open(ctx, 8, 1);
+        ASSERT_EQ(rc, 0);
+        mdn_session_cursor_t *cur8 = &ctx->cursors[1];
+        ASSERT_EQ(cur8->bucket_id, 8);
+        s = session_cursor_next(ctx, cur8);
+        ASSERT_NOT_NULL(s);
+        ASSERT_EQ(s->sess_id, 0xDEADBEEFU);
+        s = session_cursor_next(ctx, cur8);
+        ASSERT_NULL(s);
+
+        /* cursor_open with cursor_id wrapping */
+        rc = session_cursor_open(ctx, 3, (uint16_t)(MDN_MAX_QUERIES - 1));
+        ASSERT_EQ(rc, 0);
+
+        session_cursors_free(ctx);
+        ASSERT_NULL(ctx->cursors);
+
+        /* free again is safe */
+        session_cursors_free(ctx);
+
+        /* nat_bucket_load with slot_count too large for remaining data */
+        uint8_t nb_trunc[10]; memset(nb_trunc, 0, sizeof(nb_trunc));
+        put_u16(nb_trunc+0, 5); put_u16(nb_trunc+2, 0); put_u16(nb_trunc+4, 10);
+        put_u32(nb_trunc+6, 1);
+        rc = nat_bucket_load(ctx, nb_trunc, 10, 0); /* no slot data */
+        ASSERT_EQ(rc, -1);
+
+        /* free nat buckets */
+        for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+            if (ctx->nat_buckets[i]) {
+                free(ctx->nat_buckets[i]->slots);
+                free(ctx->nat_buckets[i]);
+                ctx->nat_buckets[i] = NULL;
+            }
+        }
+        free(ctx);
+    }
+
     /* Section type constants */
     ASSERT_EQ(SECT_CAP,          0x01);
     ASSERT_EQ(SECT_ZONE,         0x02);
