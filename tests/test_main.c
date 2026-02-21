@@ -2274,6 +2274,65 @@ static void test_extended(void)
         free(ctx);
     }
 
+    /* Extended template descriptor assertions */
+    {
+        mdn_ctx_t *ctx = calloc(1, sizeof(mdn_ctx_t));
+        ASSERT_NOT_NULL(ctx);
+
+        /* template with profile=1 (encapsulated) */
+        uint8_t tp[12]; memset(tp, 0, sizeof(tp));
+        put_u16(tp+0, 100); put_u16(tp+2, 32); put_u16(tp+4, 2);
+        put_u16(tp+6, 0); put_u16(tp+8, 1); put_u16(tp+10, 0);
+        int rc = template_load(ctx, tp, 12, 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->templates[0].profile, 1);
+        ASSERT_EQ(ctx->templates[0].hdr_len, 32);
+
+        /* template with desc_count=1 */
+        uint8_t tp1[12 + 8]; memset(tp1, 0, sizeof(tp1));
+        put_u16(tp1+0, 101); put_u16(tp1+2, 0); put_u16(tp1+4, 0);
+        put_u16(tp1+6, 0);   put_u16(tp1+8, 0); put_u16(tp1+10, 1);
+        put_u16(tp1+12, 7);  /* field_off */ put_u16(tp1+14, 4); /* field_len */
+        put_u16(tp1+16, 2);  /* field_type */ put_u16(tp1+18, 0); /* field_src */
+        rc = template_load(ctx, tp1, 20, 0);
+        ASSERT_EQ(rc, 0);
+        mdn_packet_template_t *t1 = &ctx->templates[1];
+        ASSERT_EQ(t1->desc_count, 1);
+        ASSERT_EQ(t1->descs[0].field_off, 7);
+        ASSERT_EQ(t1->descs[0].field_len, 4);
+        ASSERT_EQ(t1->descs[0].field_type, 2);
+
+        /* truncated template payload -> -1 */
+        rc = template_load(ctx, tp1, 5, 0);
+        ASSERT_EQ(rc, -1);
+
+        /* zero hdr_len -> hdr_cap=64 (default) */
+        uint8_t tp_zero[12]; memset(tp_zero, 0, sizeof(tp_zero));
+        put_u16(tp_zero+0, 200);
+        rc = template_load(ctx, tp_zero, 12, 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->templates[2].hdr_cap, 64U);
+        ASSERT_NOT_NULL(ctx->templates[2].hdr_bytes);
+
+        /* frag_count stored correctly */
+        uint8_t tp_frag[12]; memset(tp_frag, 0, sizeof(tp_frag));
+        put_u16(tp_frag+0, 201); put_u16(tp_frag+4, 7);
+        rc = template_load(ctx, tp_frag, 12, 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->templates[3].frag_count, 7);
+
+        /* template_count accumulates */
+        ASSERT_EQ(ctx->template_count, 4U);
+
+        /* free all templates */
+        for (uint32_t i = 0; i < ctx->template_count; i++) {
+            free(ctx->templates[i].hdr_bytes);
+            free(ctx->templates[i].descs);
+        }
+        free(ctx->templates);
+        free(ctx);
+    }
+
     /* Section type constants */
     ASSERT_EQ(SECT_CAP,          0x01);
     ASSERT_EQ(SECT_ZONE,         0x02);
