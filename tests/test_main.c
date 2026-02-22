@@ -2274,6 +2274,69 @@ static void test_extended(void)
         free(ctx);
     }
 
+    /* Extended audit heap assertions */
+    {
+        mdn_ctx_t *ctx = calloc(1, sizeof(mdn_ctx_t));
+        ASSERT_NOT_NULL(ctx);
+
+        /* audit window with non-zero heap */
+        /* win_id(2) flags(2) heap_len(4) [heap...] dir_count(4) [entries...] */
+        uint8_t aw[12 + 8 + 4 + 0]; /* heap=8, dir_count=0 */
+        memset(aw, 0, sizeof(aw));
+        put_u16(aw+0, 11);   /* win_id */
+        put_u16(aw+2, 0x02); /* flags */
+        put_u32(aw+4, 8);    /* heap_len=8 */
+        memset(aw+8, 0xAB, 8); /* heap data */
+        put_u32(aw+16, 0);   /* dir_count=0 */
+        int rc = audit_window_load(ctx, aw, sizeof(aw), 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->audit_count, 1U);
+        ASSERT_EQ(ctx->audit_windows[0].win_id, 11);
+        ASSERT_EQ(ctx->audit_windows[0].flags, 0x02);
+        ASSERT_EQ(ctx->audit_windows[0].heap_len, 8U);
+        ASSERT_NOT_NULL(ctx->audit_windows[0].heap);
+        ASSERT_EQ(ctx->audit_windows[0].heap[0], 0xAB);
+        ASSERT_EQ(ctx->audit_windows[0].heap[7], 0xAB);
+        ASSERT_EQ(ctx->audit_windows[0].dir_count, 0U);
+        ASSERT_NULL(ctx->audit_windows[0].dir);
+
+        /* audit window with 1 dir entry */
+        uint8_t aw2[12 + 4 + 8]; /* heap=0, dir_count=1 */
+        memset(aw2, 0, sizeof(aw2));
+        put_u16(aw2+0, 22); put_u16(aw2+2, 0); put_u32(aw2+4, 0);
+        put_u32(aw2+8, 1); /* dir_count=1 */
+        put_u32(aw2+12, 99);  /* off */
+        put_u16(aw2+16, 16);  /* len */
+        put_u16(aw2+18, 3);   /* kind */
+        rc = audit_window_load(ctx, aw2, sizeof(aw2), 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->audit_count, 2U);
+        ASSERT_NOT_NULL(ctx->audit_windows[1].dir);
+        ASSERT_EQ(ctx->audit_windows[1].dir[0].off, 99U);
+        ASSERT_EQ(ctx->audit_windows[1].dir[0].len, 16);
+        ASSERT_EQ(ctx->audit_windows[1].dir[0].kind, 3);
+
+        /* truncated payload -> -1 */
+        uint8_t short_aw[5] = {0};
+        rc = audit_window_load(ctx, short_aw, 5, 0);
+        ASSERT_EQ(rc, -1);
+
+        /* dir_count too large -> -1 */
+        uint8_t big_dir[16]; memset(big_dir, 0, sizeof(big_dir));
+        put_u16(big_dir+0, 33); put_u16(big_dir+2, 0); put_u32(big_dir+4, 0);
+        put_u32(big_dir+8, 0x00010000); /* 65536 dir entries — exceeds guard */
+        rc = audit_window_load(ctx, big_dir, 16, 0);
+        ASSERT_EQ(rc, -1);
+
+        /* free audit windows */
+        for (uint32_t i = 0; i < ctx->audit_count; i++) {
+            free(ctx->audit_windows[i].heap);
+            free(ctx->audit_windows[i].dir);
+        }
+        free(ctx->audit_windows);
+        free(ctx);
+    }
+
     /* Extended template descriptor assertions */
     {
         mdn_ctx_t *ctx = calloc(1, sizeof(mdn_ctx_t));
