@@ -2274,6 +2274,63 @@ static void test_extended(void)
         free(ctx);
     }
 
+    /* Extended export frame assertions */
+    {
+        mdn_ctx_t *ctx = calloc(1, sizeof(mdn_ctx_t));
+        ASSERT_NOT_NULL(ctx);
+
+        /* export profile with 1 field */
+        /* profile_id(2) mode(2) field_count(2) + field: id(2) off(2) w(2) src(2) */
+        uint8_t ep[6 + 8]; memset(ep, 0, sizeof(ep));
+        put_u16(ep+0, 9);  /* profile_id */
+        put_u16(ep+2, 0);  /* mode=0 */
+        put_u16(ep+4, 1);  /* field_count=1 */
+        put_u16(ep+6, 3);  /* field_id */
+        put_u16(ep+8, 0);  /* offset=0 */
+        put_u16(ep+10, 4); /* width=4 */
+        put_u16(ep+12, 1); /* source=1 */
+        int rc = export_profile_load(ctx, ep, sizeof(ep), 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->export_count, 1U);
+        ASSERT_EQ(ctx->exports[0].profile_id, 9);
+        ASSERT_EQ(ctx->exports[0].field_count, 1);
+        ASSERT_EQ(ctx->exports[0].fields[0].field_id, 3);
+        ASSERT_EQ(ctx->exports[0].fields[0].width, 4);
+        ASSERT_NOT_NULL(ctx->exports[0].frame);
+
+        /* export profile with 0 fields */
+        uint8_t ep0[6]; memset(ep0, 0, sizeof(ep0));
+        put_u16(ep0+0, 10); put_u16(ep0+2, 1); put_u16(ep0+4, 0);
+        rc = export_profile_load(ctx, ep0, 6, 0);
+        ASSERT_EQ(rc, 0);
+        ASSERT_EQ(ctx->export_count, 2U);
+        ASSERT_EQ(ctx->exports[1].profile_id, 10);
+        ASSERT_EQ(ctx->exports[1].mode, 1);
+        ASSERT_EQ(ctx->exports[1].field_count, 0);
+
+        /* truncated -> -1 */
+        rc = export_profile_load(ctx, ep0, 3, 0);
+        ASSERT_EQ(rc, -1);
+
+        /* field_count > MDN_EXPORT_FIELDS_MAX -> -1 */
+        uint8_t ep_big[6]; memset(ep_big, 0, sizeof(ep_big));
+        put_u16(ep_big+4, (uint16_t)(MDN_EXPORT_FIELDS_MAX + 1));
+        rc = export_profile_load(ctx, ep_big, 6, 0);
+        ASSERT_EQ(rc, -1);
+
+        /* emit_fields with NULL profile -> no crash */
+        export_emit_fields(NULL, ctx);
+
+        /* emit_fields with valid 0-field profile */
+        export_emit_fields(&ctx->exports[1], ctx);
+
+        export_free_all(ctx);
+        ASSERT_EQ(ctx->export_count, 0U);
+        ASSERT_NULL(ctx->exports);
+
+        free(ctx);
+    }
+
     /* Extended audit heap assertions */
     {
         mdn_ctx_t *ctx = calloc(1, sizeof(mdn_ctx_t));
