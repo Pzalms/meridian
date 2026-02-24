@@ -1,7 +1,7 @@
 /*
  * test_main.c - comprehensive test suite for the meridian library.
  * Compilation:
- *   cc -Iinclude -Isrc -Wall -Wextra -std=c11 tests/test_main.c src/*.c -lm -o tests/test_main
+ *   cc -Iinclude -Isrc -Wall -Wextra -std=c11 tests/test_main.c src/[*].c -lm -o tests/test_main
  */
 
 #include <stdio.h>
