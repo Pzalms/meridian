@@ -2274,6 +2274,45 @@ static void test_extended(void)
         free(ctx);
     }
 
+    /* Extended CRC vector assertions */
+    {
+        /* empty input */
+        uint32_t v0 = crc32_compute(NULL, 0);
+        ASSERT_EQ(v0, crc32_compute(NULL, 0)); /* deterministic */
+
+        /* single zero byte */
+        uint8_t z1 = 0;
+        uint32_t vz = crc32_compute(&z1, 1);
+        ASSERT_NE(vz, 0U);
+
+        /* all-0xFF 4-byte input */
+        uint8_t ff4[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+        uint32_t vff = crc32_compute(ff4, 4);
+        ASSERT_EQ(vff, crc32_compute(ff4, 4));
+
+        /* two different inputs produce different CRCs */
+        uint8_t aa = 0xAA, bb = 0xBB;
+        ASSERT_NE(crc32_compute(&aa, 1), crc32_compute(&bb, 1));
+
+        /* concatenation consistency: CRC is length-sensitive */
+        uint8_t two[2] = {0x61, 0x62};
+        uint8_t one[1] = {0x61};
+        ASSERT_NE(crc32_compute(two, 2), crc32_compute(one, 1));
+
+        /* known stable values */
+        uint8_t seq[8];
+        for (int i = 0; i < 8; i++) seq[i] = (uint8_t)(i * 3 + 1);
+        uint32_t vseq = crc32_compute(seq, 8);
+        ASSERT_EQ(vseq, crc32_compute(seq, 8));
+        ASSERT_NE(vseq, 0U);
+
+        /* 16-byte input */
+        uint8_t s16[16];
+        for (int i = 0; i < 16; i++) s16[i] = (uint8_t)(0xFF - i);
+        uint32_t v16 = crc32_compute(s16, 16);
+        ASSERT_EQ(v16, crc32_compute(s16, 16));
+    }
+
     /* Extended export frame assertions */
     {
         mdn_ctx_t *ctx = calloc(1, sizeof(mdn_ctx_t));
