@@ -21,12 +21,32 @@ static uint8_t *read_file(const char *path, size_t *out_len) {
     return buf;
 }
 
+static void print_usage(void)
+{
+    printf("usage: mdntool <command> <file>\n\n");
+    printf("commands:\n");
+    printf("  check <file>  parse file and verify integrity\n");
+    printf("  run   <file>  parse and execute the policy engine\n");
+    printf("  dump  <file>  parse and print all sections\n");
+    printf("  help          show this message\n");
+}
+
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: mdntool <check|run|dump> <file>\n");
+    if (argc < 2) {
+        print_usage();
         return 1;
     }
-    const char *cmd  = argv[1];
+    const char *cmd = argv[1];
+
+    if (strcmp(cmd, "help") == 0 || strcmp(cmd, "--help") == 0) {
+        print_usage();
+        return 0;
+    }
+
+    if (argc < 3) {
+        fprintf(stderr, "usage: mdntool <check|run|dump|help> <file>\n");
+        return 1;
+    }
     const char *path = argv[2];
 
     size_t len = 0;
