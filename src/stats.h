@@ -14,5 +14,6 @@ typedef struct {
 
 void stats_init(mdn_stats_t *s);
 void stats_record_hit(mdn_stats_t *s, uint32_t *field);
+void stats_print(const mdn_stats_t *s);
 
 #endif /* MDN_STATS_H */
