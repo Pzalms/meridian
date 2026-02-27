@@ -31,6 +31,7 @@
 #define SECT_AUDIT          0x08
 #define SECT_EXPORT         0x09
 #define SECT_POLICY_PATCH   0x0A
+#define SECT_QUERY          0x0B
 
 /* ------------------------------------------------------------------ */
 /* Flag constants                                                       */

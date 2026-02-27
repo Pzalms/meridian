@@ -127,6 +127,9 @@ int mdn_parse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
         case SECT_SESSION:
             /* session sections handled externally; skip */
             break;
+        case SECT_QUERY:
+            rc = query_load(ctx, data, e->length);
+            break;
         default:
             /* unknown section type — skip */
             break;
