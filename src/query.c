@@ -111,7 +111,8 @@ int policy_patch_apply(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len)
         }
 
         case OP_NORMALIZE_PREFIXES: {
-            prefix_normalize_pages(ctx);
+            if (ctx->cap_ok)
+                prefix_normalize_pages(ctx);
             break;
         }
 
@@ -139,6 +140,7 @@ int policy_patch_apply(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len)
 
         case OP_COMPACT_AUDIT: {
             if (op_len < 2) break;
+            if (!ctx->cap_ok) break;
             uint16_t win_id = read_u16(op_data + 0);
             for (uint32_t w = 0; w < ctx->audit_count; w++) {
                 if (ctx->audit_windows[w].win_id == win_id) {

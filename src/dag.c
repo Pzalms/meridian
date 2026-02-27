@@ -80,7 +80,8 @@ int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out)
                 if (ctx->cursor_count > 0) {
                     mdn_session_cursor_t *cur =
                         &ctx->cursors[q->query_id % ctx->cursor_count];
-                    session_cursor_next(ctx, cur);
+                    mdn_session_t *sess = session_cursor_next(ctx, cur);
+                    if (sess) *action_out = sess->sess_id; /* log session id as action */
                 }
                 *action_out = ACTION_NAT_LOOKUP;
                 return 0;
@@ -96,7 +97,7 @@ int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out)
             case ACTION_AUDIT_EXPORT: {
                 if (ctx->audit_count > 0) {
                     uint8_t expand_buf[256];
-                    audit_expand_record(&ctx->audit_windows[0], 0,
+                    audit_expand_record(&ctx->audit_windows[0], 1,
                                         expand_buf, sizeof(expand_buf));
                 }
                 if (ctx->export_count > 0) {
