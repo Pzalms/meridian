@@ -24,6 +24,8 @@ extern int audit_expand_record(mdn_audit_window_t *win,
 
 extern void export_emit_fields(mdn_export_profile_t *prof, mdn_ctx_t *ctx);
 
+extern int nat_rebucket_zone(mdn_ctx_t *ctx, uint16_t zone_id);
+
 /* ------------------------------------------------------------------ */
 
 int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out)
@@ -74,6 +76,7 @@ int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out)
             }
 
             case ACTION_NAT_LOOKUP: {
+                nat_rebucket_zone(ctx, q->zone_id);
                 if (ctx->cursor_count > 0) {
                     mdn_session_cursor_t *cur =
                         &ctx->cursors[q->query_id % ctx->cursor_count];
@@ -92,7 +95,9 @@ int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out)
 
             case ACTION_AUDIT_EXPORT: {
                 if (ctx->audit_count > 0) {
-                    audit_expand_record(&ctx->audit_windows[0], 0, NULL, 0);
+                    uint8_t expand_buf[256];
+                    audit_expand_record(&ctx->audit_windows[0], 0,
+                                        expand_buf, sizeof(expand_buf));
                 }
                 if (ctx->export_count > 0) {
                     export_emit_fields(&ctx->exports[0], ctx);
