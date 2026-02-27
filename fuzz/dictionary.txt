@@ -1,5 +1,6 @@
 # Meridian binary format dictionary for coverage-guided fuzzing
-# Magic bytes and version
+# Magic header
+"MDN1"
 "\x4d\x44\x4e\x01"
 "\x4d\x44\x4e\x02"
 
