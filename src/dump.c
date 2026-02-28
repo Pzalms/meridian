@@ -69,11 +69,13 @@ void dump_templates(mdn_ctx_t *ctx)
     printf("=== templates (count=%u) ===\n", (unsigned)ctx->template_count);
     for (uint32_t i = 0; i < ctx->template_count; i++) {
         mdn_packet_template_t *t = &ctx->templates[i];
-        printf("  tmpl_id=%u hdr_len=%u frag_count=%u desc_count=%u\n",
+        printf("  tmpl_id=%u hdr_len=%u frag_count=%u flags=0x%04x desc_count=%u profile=%u\n",
                (unsigned)t->tmpl_id,
                (unsigned)t->hdr_len,
                (unsigned)t->frag_count,
-               (unsigned)t->desc_count);
+               (unsigned)t->flags,
+               (unsigned)t->desc_count,
+               (unsigned)t->profile);
     }
 }
 
