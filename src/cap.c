@@ -10,9 +10,13 @@ static const uint8_t CAP_TOKEN[MDN_CAP_TOKEN_LEN] = {
 };
 static const uint64_t CAP_NONCE = 0xA1B2C3D4E5F60718ULL;
 
+/* Minimum wire size: token(32) + nonce(8) = 40 bytes */
+#define CAP_WIRE_SIZE ((uint32_t)(MDN_CAP_TOKEN_LEN + 8u))
+
 int mdn_cap_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len)
 {
-    if (len < (uint32_t)(MDN_CAP_TOKEN_LEN + 8))
+    /* SECT_CAP payload must carry at least the token and nonce */
+    if (len < CAP_WIRE_SIZE)
         return -1;
     memcpy(ctx->cap_token, data, MDN_CAP_TOKEN_LEN);
     ctx->cap_nonce = mdn_u64le(data + MDN_CAP_TOKEN_LEN);
