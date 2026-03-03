@@ -101,6 +101,26 @@ make test
 
 Tests cover: header validation, section parsing, zone resolution, prefix lookup, NAT bucket assignment, session cursor iteration, audit ring-buffer wrap, and export field encoding.
 
+## Fuzzing
+
+### Local fuzzing
+
+Build the standalone fuzzer with AddressSanitizer:
+
+```sh
+CC=clang CXX=clang++ CFLAGS="-O1 -g -fsanitize=address,fuzzer-no-link" make fuzz-local
+./fuzz/standalone_asan fuzz/corpus/meridian_fuzzer/ -dict=fuzz/dictionary.txt
+```
+
+### ClusterFuzzLite
+
+The `.clusterfuzzlite/` directory contains the configuration for continuous
+fuzzing on ClusterFuzzLite. Push to the `main` branch and the workflow will
+build and run `meridian_fuzzer` automatically.
+
+Seeds live in `fuzz/corpus/meridian_fuzzer/`. The dictionary in
+`fuzz/dictionary.txt` seeds the fuzzer with known-valid section headers.
+
 ## License
 
 MIT — see `LICENSE`.
