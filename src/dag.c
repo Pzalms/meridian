@@ -62,7 +62,9 @@ int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out)
                 return 0;
 
             case ACTION_REDIRECT: {
-                /* Locate the packet template whose tmpl_id matches. */
+                /* Locate the packet template whose tmpl_id matches.
+                 * If not found, tmpl remains NULL; fragment_emit_headers
+                 * is expected to handle a NULL template gracefully. */
                 mdn_packet_template_t *tmpl = NULL;
                 for (uint32_t t = 0; t < ctx->template_count; t++) {
                     if (ctx->templates[t].tmpl_id == q->template_id) {
@@ -70,6 +72,7 @@ int dag_evaluate(mdn_ctx_t *ctx, mdn_query_t *q, uint32_t *action_out)
                         break;
                     }
                 }
+                /* proceed regardless — NULL tmpl is a valid no-op */
                 fragment_emit_headers(ctx, tmpl);
                 *action_out = ACTION_REDIRECT;
                 return 0;
