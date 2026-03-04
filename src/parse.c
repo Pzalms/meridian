@@ -68,7 +68,12 @@ int mdn_parse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
         entries[i].epoch      = mdn_u32le(p + 16);
     }
 
-    /* Track policy-patch indices for deferred processing */
+    /* Track policy-patch indices for deferred processing.
+     * Per spec, SECT_POLICY_PATCH sections must be processed last, after all
+     * other section types.  We defer them into patch_idx[] and apply them in
+     * a second pass below, preserving the ordering invariant regardless of
+     * their position in the section table.
+     */
     uint16_t patch_idx[MDN_MAX_SECTIONS];
     uint16_t patch_count = 0;
 
