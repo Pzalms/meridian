@@ -20,7 +20,10 @@ int nat_bucket_load(mdn_ctx_t *ctx, const uint8_t *data, uint32_t len, uint16_t 
     memcpy(&slot_count, data + 4, 2);
     memcpy(&epoch,      data + 6, 4);
 
-    /* Validate full payload length */
+    /* Reject payloads that are too small to hold the declared slot count.
+     * This prevents integer-width issues when slot_count * SESSION_WIRE_SIZE
+     * overflows — uint32_t arithmetic truncates only when slot_count > 82M,
+     * well beyond what fits in a 16-bit field (max 65535 slots). */
     if (len < 10U + (uint32_t)slot_count * SESSION_WIRE_SIZE) return -1;
 
     mdn_nat_bucket_t *bkt = calloc(1, sizeof(mdn_nat_bucket_t));
