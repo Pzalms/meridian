@@ -122,7 +122,7 @@ void audit_compact_window(mdn_audit_window_t *win)
     free(win->heap);
     win->heap     = new_heap;
     win->heap_len = fill_len;
-    /* dir[] retains stale offsets into the pre-compaction layout */
+    /* dir[] retains prior offsets into the pre-compaction layout */
 }
 
 /* ------------------------------------------------------------------ */
