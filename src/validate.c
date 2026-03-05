@@ -29,5 +29,11 @@ int mdn_validate(mdn_ctx_t *ctx)
             return -1;
     }
 
+    /* 4. Export profile field counts must not exceed the compile-time cap */
+    for (uint32_t i = 0; i < ctx->export_count; i++) {
+        if (ctx->exports[i].field_count > MDN_EXPORT_FIELDS_MAX)
+            return -1;
+    }
+
     return 0;
 }
