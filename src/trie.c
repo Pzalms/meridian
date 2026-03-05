@@ -2,6 +2,9 @@
 #include <string.h>
 
 int trie_lookup_prefix(mdn_ctx_t *ctx, uint32_t page_id, uint32_t query_key) {
+    /* validate page_id before scanning — only registered pages are eligible */
+    if (page_id >= MDN_MAX_PREFIX_PAGES) return -1;
+
     mdn_prefix_page_t *pg = NULL;
     for (int i = 0; i < MDN_MAX_PREFIX_PAGES; i++) {
         if (ctx->prefix_pages[i] && ctx->prefix_pages[i]->page_id == page_id) {
