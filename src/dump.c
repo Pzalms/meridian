@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "dump.h"
+#include "util.h"
 
 /* ------------------------------------------------------------------ */
 /* dump_zones                                                           */
@@ -99,6 +100,97 @@ void dump_queries(mdn_ctx_t *ctx)
 }
 
 /* ------------------------------------------------------------------ */
+/* dump_prefix_pages                                                    */
+/* Prints all non-NULL prefix pages: page_id, kind, stride,           */
+/* item_count, and dir_count.                                          */
+/* ------------------------------------------------------------------ */
+
+void dump_prefix_pages(mdn_ctx_t *ctx)
+{
+    if (!ctx) return;
+    printf("=== prefix_pages ===\n");
+    for (int i = 0; i < MDN_MAX_PREFIX_PAGES; i++) {
+        mdn_prefix_page_t *pg = ctx->prefix_pages[i];
+        if (!pg) continue;
+        printf("  page_id=%u kind=%u stride=%u item_count=%u dir_count=%u\n",
+               (unsigned)pg->page_id,
+               (unsigned)pg->kind,
+               (unsigned)pg->stride,
+               (unsigned)pg->item_count,
+               (unsigned)pg->dir_count);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* dump_audit_windows                                                   */
+/* Prints all audit windows: win_id, flags, heap_len, dir_count.      */
+/* ------------------------------------------------------------------ */
+
+void dump_audit_windows(mdn_ctx_t *ctx)
+{
+    if (!ctx) return;
+    printf("=== audit_windows (count=%u) ===\n", (unsigned)ctx->audit_count);
+    for (uint32_t i = 0; i < ctx->audit_count; i++) {
+        mdn_audit_window_t *w = &ctx->audit_windows[i];
+        printf("  win_id=%u flags=0x%04x heap_len=%u dir_count=%u\n",
+               (unsigned)w->win_id,
+               (unsigned)w->flags,
+               (unsigned)w->heap_len,
+               (unsigned)w->dir_count);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* dump_exports                                                         */
+/* Prints all export profiles: profile_id, mode, field_count,         */
+/* frame_cap.                                                           */
+/* ------------------------------------------------------------------ */
+
+void dump_exports(mdn_ctx_t *ctx)
+{
+    if (!ctx) return;
+    printf("=== export_profiles (count=%u) ===\n", (unsigned)ctx->export_count);
+    for (uint32_t i = 0; i < ctx->export_count; i++) {
+        mdn_export_profile_t *ep = &ctx->exports[i];
+        printf("  profile_id=%u mode=%u field_count=%u frame_cap=%u\n",
+               (unsigned)ep->profile_id,
+               (unsigned)ep->mode,
+               (unsigned)ep->field_count,
+               (unsigned)ep->frame_cap);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* dump_sessions                                                        */
+/* Prints each non-NULL NAT bucket along with its session count.       */
+/* ------------------------------------------------------------------ */
+
+void dump_sessions(mdn_ctx_t *ctx)
+{
+    if (!ctx) return;
+    printf("=== sessions (by nat bucket) ===\n");
+    for (int i = 0; i < MDN_MAX_NAT_BUCKETS; i++) {
+        mdn_nat_bucket_t *b = ctx->nat_buckets[i];
+        if (!b) continue;
+        printf("  bucket_id=%u session_count=%u\n",
+               (unsigned)b->bucket_id,
+               (unsigned)b->slot_count);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* dump_hex_section                                                     */
+/* Hex-dumps a raw section payload using mdn_hex_dump.                */
+/* ------------------------------------------------------------------ */
+
+void dump_hex_section(const uint8_t *data, uint32_t len)
+{
+    if (!data || !len) return;
+    printf("=== section payload (%u bytes) ===\n", (unsigned)len);
+    mdn_hex_dump(data, len, stdout);
+}
+
+/* ------------------------------------------------------------------ */
 /* dump_all                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -109,4 +201,8 @@ void dump_all(mdn_ctx_t *ctx)
     dump_nat(ctx);
     dump_templates(ctx);
     dump_queries(ctx);
+    dump_prefix_pages(ctx);
+    dump_audit_windows(ctx);
+    dump_exports(ctx);
+    dump_sessions(ctx);
 }
