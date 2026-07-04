@@ -32,6 +32,187 @@ typedef struct {
 #define MDN_HEADER_LEN  12u
 #define SECT_ENTRY_LEN  20u
 
+/* -----------------------------------------------------------------------
+ * parse_read_header — internal helper: read and validate the fixed header.
+ *
+ * Checks the magic bytes, minimum length, and extracts flags + section
+ * count into the out-parameters.  Returns 0 on success, -1 on any error.
+ * Does not modify any mdn_ctx_t fields; it is a pure read-only probe.
+ * ----------------------------------------------------------------------- */
+static int parse_read_header(const uint8_t *buf, size_t len,
+                             uint16_t *flags_out, uint16_t *count_out)
+{
+    if (len < MDN_HEADER_LEN)
+        return -1;
+    if (memcmp(buf, MDN_MAGIC, 4) != 0)
+        return -1;
+
+    *flags_out = mdn_u16le(buf + 4);
+    *count_out = mdn_u16le(buf + 6);
+
+    /* Validate that the section table fits in the supplied buffer */
+    size_t table_size = (size_t)(*count_out) * SECT_ENTRY_LEN;
+    if (len < MDN_HEADER_LEN + table_size)
+        return -1;
+    if (*count_out > MDN_MAX_SECTIONS)
+        return -1;
+
+    return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * mdn_parse_section_count — probe a buffer for section count.
+ *
+ * Returns the number of sections encoded in the header without performing
+ * a full parse.  Returns -1 if the buffer is malformed or too short.
+ * ----------------------------------------------------------------------- */
+int mdn_parse_section_count(const uint8_t *buf, size_t len)
+{
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+    return (int)count;
+}
+
+/* -----------------------------------------------------------------------
+ * mdn_parse_has_section — probe for presence of a given section type.
+ *
+ * Scans the section table in buf[] without loading anything into a
+ * context.  Returns 1 if at least one section of sect_type is present,
+ * 0 if none found, or -1 if the buffer is malformed.
+ * ----------------------------------------------------------------------- */
+int mdn_parse_has_section(const uint8_t *buf, size_t len, uint8_t sect_type)
+{
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *p = buf + MDN_HEADER_LEN + (size_t)i * SECT_ENTRY_LEN;
+        if (p[0] == sect_type)
+            return 1;
+    }
+    return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * mdn_parse_section_offset — locate the first section of a given type.
+ *
+ * Returns the byte offset (relative to buf) of the first section whose
+ * type matches sect_type, or 0 if no matching section is found.  The
+ * offset returned is the section's data payload offset, not the offset
+ * of the section table entry.
+ *
+ * A return value of 0 is ambiguous only if a section payload genuinely
+ * begins at byte 0, which cannot happen because the header occupies at
+ * least MDN_HEADER_LEN bytes.
+ * ----------------------------------------------------------------------- */
+uint32_t mdn_parse_section_offset(const uint8_t *buf, size_t len, uint8_t sect_type)
+{
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return 0;
+
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *p = buf + MDN_HEADER_LEN + (size_t)i * SECT_ENTRY_LEN;
+        if (p[0] == sect_type) {
+            uint32_t off = mdn_u32le(p + 4);
+            uint32_t slen = mdn_u32le(p + 8);
+            /* Validate that the payload is within bounds before returning */
+            if ((size_t)off + (size_t)slen <= len)
+                return off;
+            return 0;
+        }
+    }
+    return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * mdn_parse_verify_all_crcs — verify checksums for every section.
+ *
+ * Iterates the section table and recomputes CRC32C for each payload.
+ * Returns 0 if all checksums pass, or -1 on the first mismatch.
+ * Sections whose payload would exceed the buffer bounds are also treated
+ * as failures.
+ * ----------------------------------------------------------------------- */
+int mdn_parse_verify_all_crcs(const uint8_t *buf, size_t len)
+{
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *p = buf + MDN_HEADER_LEN + (size_t)i * SECT_ENTRY_LEN;
+        uint32_t off   = mdn_u32le(p + 4);
+        uint32_t slen  = mdn_u32le(p + 8);
+        uint32_t stored = mdn_u32le(p + 12);
+
+        if ((size_t)off + (size_t)slen > len)
+            return -1;
+
+        uint32_t computed = crc32_compute(buf + off, slen);
+        if (computed != stored)
+            return -1;
+    }
+    return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * mdn_parse_section_stats — count occurrences of each section type.
+ *
+ * Fills counts_out[16] with the number of sections observed for each of
+ * the 16 possible type values (types 0x00–0x0F).  Types outside this
+ * range are silently ignored.  Returns 0 on success, -1 if the header is
+ * malformed.
+ *
+ * counts_out must point to an array of at least 16 uint32_t elements;
+ * the caller is responsible for zeroing it before passing it in, or the
+ * function will zero it internally.
+ * ----------------------------------------------------------------------- */
+int mdn_parse_section_stats(const uint8_t *buf, size_t len, uint32_t *counts_out)
+{
+    if (!counts_out)
+        return -1;
+
+    /* Zero the output array so partial failures leave a clean state */
+    memset(counts_out, 0, 16 * sizeof(uint32_t));
+
+    uint16_t flags = 0;
+    uint16_t count = 0;
+    if (parse_read_header(buf, len, &flags, &count) != 0)
+        return -1;
+
+    for (uint16_t i = 0; i < count; i++) {
+        const uint8_t *p = buf + MDN_HEADER_LEN + (size_t)i * SECT_ENTRY_LEN;
+        uint8_t t = p[0];
+        if (t < 16)
+            counts_out[t]++;
+    }
+    return 0;
+}
+
+/* -----------------------------------------------------------------------
+ * mdn_reparse — reset parse-time counters then re-parse.
+ *
+ * Clears stats_sections_loaded and stats_crc_miss before delegating to
+ * mdn_parse, so callers that re-use a context across multiple parse
+ * attempts get fresh counters each time rather than accumulating values
+ * from prior runs.
+ * ----------------------------------------------------------------------- */
+int mdn_reparse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
+{
+    ctx->stats_sections_loaded = 0;
+    ctx->stats_crc_miss        = 0;
+    return mdn_parse(ctx, buf, len);
+}
+
+/* -----------------------------------------------------------------------
+ * mdn_parse — full parse of a meridian format buffer into ctx.
+ * ----------------------------------------------------------------------- */
 int mdn_parse(mdn_ctx_t *ctx, const uint8_t *buf, size_t len)
 {
     /* 1. Verify magic */
