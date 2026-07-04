@@ -83,3 +83,180 @@ void zone_free_all(mdn_ctx_t *ctx)
         }
     }
 }
+
+/*
+ * zone_find — locate a zone by zone_id using the slot index.
+ * Returns a pointer to the zone if found, NULL otherwise.
+ *
+ * Unlike zone_lookup which performs a linear scan for zone_id equality,
+ * zone_find indexes directly into the slot computed from zone_id and
+ * confirms that the stored zone_id matches.
+ */
+mdn_zone_t *zone_find(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    uint32_t slot = (uint32_t)zone_id % MDN_MAX_ZONES;
+    mdn_zone_t *z = ctx->zones[slot];
+    if (z && z->zone_id == zone_id)
+        return z;
+    /* Slot collision: fall back to linear scan */
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        if (ctx->zones[i] && ctx->zones[i]->zone_id == zone_id)
+            return ctx->zones[i];
+    }
+    return NULL;
+}
+
+/*
+ * zone_set_parent — update the parent_id field of a loaded zone.
+ * Returns 0 on success, -1 if the zone is not found.
+ *
+ * The parent relationship is used by zone_walk to traverse zone
+ * hierarchies; this function allows the control plane to re-parent
+ * a zone without reloading its full payload.
+ */
+int zone_set_parent(mdn_ctx_t *ctx, uint16_t zone_id, uint16_t parent_id)
+{
+    mdn_zone_t *z = zone_find(ctx, zone_id);
+    if (!z)
+        return -1;
+    z->parent_id = parent_id;
+    return 0;
+}
+
+/*
+ * zone_increment_epoch — advance the epoch counter for a zone.
+ * Returns the new epoch value, or -1 if the zone is not found.
+ *
+ * Epoch values are used by NAT cursors to detect when a zone's
+ * bucket layout has changed.  Incrementing the epoch signals that
+ * previously issued cursors for this zone should be treated as
+ * potentially inconsistent.
+ */
+int zone_increment_epoch(mdn_ctx_t *ctx, uint16_t zone_id)
+{
+    mdn_zone_t *z = zone_find(ctx, zone_id);
+    if (!z)
+        return -1;
+    z->epoch++;
+    return (int)z->epoch;
+}
+
+/*
+ * zone_count — return the number of non-NULL zone entries in ctx->zones[].
+ */
+int zone_count(mdn_ctx_t *ctx)
+{
+    int n = 0;
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        if (ctx->zones[i])
+            n++;
+    }
+    return n;
+}
+
+/*
+ * zone_walk — collect all zone_ids reachable from root_id by following
+ * parent_id chains.  Writes up to out_cap zone_ids into out[].
+ *
+ * The walk ascends the parent chain starting at root_id.  A parent_id
+ * of 0 (or a parent that resolves to a zone already in the output list)
+ * terminates the walk.  Returns the number of zone_ids written.
+ *
+ * Notes:
+ *   - root_id itself is always the first entry written (if out_cap >= 1).
+ *   - Cycles are broken by bounding iterations at MDN_MAX_ZONES.
+ *   - A zone whose parent_id equals its own zone_id is treated as a root.
+ */
+int zone_walk(mdn_ctx_t *ctx, uint16_t root_id, uint16_t *out, uint32_t out_cap)
+{
+    if (!out || out_cap == 0)
+        return 0;
+
+    uint32_t count = 0;
+    uint16_t current = root_id;
+
+    for (uint32_t step = 0; step < MDN_MAX_ZONES && count < out_cap; step++) {
+        mdn_zone_t *z = zone_find(ctx, current);
+        if (!z)
+            break;
+
+        /* Record this zone_id */
+        out[count++] = z->zone_id;
+
+        /* Stop if we have reached a root (parent_id == 0 or self-referential) */
+        if (z->parent_id == 0 || z->parent_id == z->zone_id)
+            break;
+
+        /* Detect duplicates to avoid infinite loops */
+        int already_seen = 0;
+        for (uint32_t k = 0; k < count - 1; k++) {
+            if (out[k] == z->parent_id) {
+                already_seen = 1;
+                break;
+            }
+        }
+        if (already_seen)
+            break;
+
+        current = z->parent_id;
+    }
+
+    return (int)count;
+}
+
+/*
+ * zone_copy — duplicate the zone data stored at src_id into the dst_id slot.
+ *
+ * The destination slot is allocated (or replaced if already occupied).
+ * The copy retains all fields from the source but has its zone_id set
+ * to dst_id so it occupies the correct identity in the table.
+ *
+ * Returns 0 on success, -1 if src zone is not found or allocation fails.
+ */
+int zone_copy(mdn_ctx_t *ctx, uint16_t src_id, uint16_t dst_id)
+{
+    mdn_zone_t *src = zone_find(ctx, src_id);
+    if (!src)
+        return -1;
+
+    mdn_zone_t *dst = calloc(1, sizeof(mdn_zone_t));
+    if (!dst)
+        return -1;
+
+    *dst = *src;           /* copy all fields */
+    dst->zone_id = dst_id; /* override identity */
+
+    uint32_t slot = (uint32_t)dst_id % MDN_MAX_ZONES;
+    if (ctx->zones[slot]) {
+        free(ctx->zones[slot]);
+    }
+    ctx->zones[slot] = dst;
+    return 0;
+}
+
+/*
+ * zone_stats — aggregate statistics across all loaded zones.
+ *
+ * Fills *total_out with the count of non-NULL zone entries.
+ * Fills *with_parent_out with the count of zones whose parent_id != 0.
+ * Either output pointer may be NULL if the caller does not need that stat.
+ */
+void zone_stats(mdn_ctx_t *ctx, uint32_t *total_out, uint32_t *with_parent_out)
+{
+    uint32_t total = 0;
+    uint32_t with_parent = 0;
+
+    for (uint32_t i = 0; i < MDN_MAX_ZONES; i++) {
+        mdn_zone_t *z = ctx->zones[i];
+        if (!z)
+            continue;
+        total++;
+        if (z->parent_id != 0)
+            with_parent++;
+    }
+
+    if (total_out)
+        *total_out = total;
+    if (with_parent_out)
+        *with_parent_out = with_parent;
+}
